@@ -5,34 +5,31 @@
     <title>Hero.LogViewer</title>
     <style>
         :root {
-            --bg-deep-blue: #0d1b2a;
-            --bg-mid-blue: #1b263b;
-            --bg-light-blue: #2a3a50;
-            --text-cream: #e0e1dd;
-            --accent-cyan: #61dafb;
-            --accent-yellow: #f7b801;
-            --accent-red: #f45b69;
-            --accent-gray: #778da9;
-            --accent-lavender: #b39ddb;
-            --accent-teal: #80cbc4;
+            --bg-charcoal: #1e1e1e;
+            --bg-charcoal-secondary: #2c2c2e;
+            --bg-control: #3c3c3e;
+            --text-off-white: #dcdcdc;
+            --accent-sky-blue: #569cd6;
+            --accent-soft-coral: #f47067;
+            --accent-gray: #808080;
         }
 
         body {
-            margin: 0; background: var(--bg-deep-blue); color: var(--text-cream);
+            margin: 0; background: var(--bg-charcoal); color: var(--text-off-white);
             font-family: "Consolas", "Courier New", monospace;
-            font-size: 12px; display: flex; flex-direction: column; height: 100vh;
+            font-size: 14px; display: flex; flex-direction: column; height: 100vh;
             overflow: hidden;
         }
 
         /* Dark Scrollbar */
         ::-webkit-scrollbar { width: 12px; height: 12px; }
-        ::-webkit-scrollbar-track { background: var(--bg-mid-blue); }
+        ::-webkit-scrollbar-track { background: var(--bg-charcoal-secondary); }
         ::-webkit-scrollbar-thumb {
-            background-color: var(--bg-light-blue);
+            background-color: var(--bg-control);
             border-radius: 6px;
-            border: 2px solid var(--bg-mid-blue);
+            border: 2px solid var(--bg-charcoal-secondary);
         }
-        ::-webkit-scrollbar-thumb:hover { background-color: #4a5a70; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #4a4a4a; }
 
         .split-container {
             display: flex; flex-direction: column; flex: 1; min-height: 0;
@@ -43,11 +40,11 @@
         }
 
         #mainView { flex: 1 1 50%; }
-        #filterView { flex: 1 1 50%; background: var(--bg-mid-blue); }
+        #filterView { flex: 1 1 50%; background: var(--bg-charcoal-secondary); }
 
         /* Toolbar inside Filter View */
         .toolbar {
-            height: 36px; background: var(--bg-mid-blue); display: flex; align-items: center;
+            height: 36px; background: var(--bg-charcoal-secondary); display: flex; align-items: center;
             gap: 12px; padding: 0 12px; border-bottom: 1px solid #000; flex-shrink: 0;
             z-index: 20;
         }
@@ -55,16 +52,16 @@
         .editor-container { flex: 1; width: 100%; min-height: 0; }
 
         button, input {
-            background: var(--bg-light-blue); color: var(--text-cream); border: 1px solid #000;
-            padding: 5px 10px; border-radius: 2px; font-family: inherit; font-size: 12px;
+            background: var(--bg-control); color: var(--text-off-white); border: 1px solid #000;
+            padding: 5px 10px; border-radius: 2px; font-family: inherit; font-size: 14px;
         }
 
         #fileInput { width: 220px; }
 
         /* Stretches the search input to take the rest of the space */
         #searchInput { flex: 1; min-width: 200px; }
-        #searchInput:focus { outline: 1px solid var(--accent-cyan); border-color: var(--accent-cyan); }
-        #searchInput.active-filter { color: var(--accent-cyan); font-weight: bold; border-color: var(--accent-cyan); }
+        #searchInput:focus { outline: 1px solid var(--accent-sky-blue); border-color: var(--accent-sky-blue); }
+        #searchInput.active-filter { color: var(--accent-sky-blue); font-weight: bold; border-color: var(--accent-sky-blue); }
 
         .splitter {
             height: 8px; background: #000; cursor: row-resize; flex-shrink: 0;
@@ -74,7 +71,7 @@
         .splitter::after {
             content: "•••"; color: var(--accent-gray); letter-spacing: 2px; font-size: 10px;
         }
-        .splitter:hover, .splitter.dragging { background: var(--accent-cyan); }
+        .splitter:hover, .splitter.dragging { background: var(--accent-sky-blue); }
     </style>
 </head>
 <body>
@@ -119,46 +116,46 @@
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
     require(['vs/editor/editor.main'], function() {
         
-        monaco.editor.defineTheme('heroDark', {
+        monaco.editor.defineTheme('riderIslandsDark', {
             base: 'vs-dark',
             inherit: true,
             rules: [
-                { token: 'log-part-timestamp', foreground: '888888' },
-                { token: 'log-part-thread', foreground: 'ffaaaa' },
-                { token: 'log-part-logger', foreground: 'aaaaff' },
-                { token: 'log-level-error', foreground: 'ff5555', fontStyle: 'bold' },
-                { token: 'log-level-warn', foreground: 'ffaa00', fontStyle: 'bold' },
-                { token: 'log-level-info', foreground: '55ffff' },
-                { token: 'log-level-debug', foreground: '55ff55' },
-                { token: 'log-level-trace', foreground: 'ff55ff' },
-                { token: 'log-part-level', foreground: 'ffffff' },
-                { token: 'log-part-message', foreground: 'e0e1dd' },
+                { token: 'log-part-timestamp', foreground: '808080' },
+                { token: 'log-part-thread', foreground: '9cdcfe' },
+                { token: 'log-part-logger', foreground: '4ec9b0' },
+                { token: 'log-level-error', foreground: 'f47067', fontStyle: 'bold' },
+                { token: 'log-level-warn', foreground: 'ce9178', fontStyle: 'bold' },
+                { token: 'log-level-info', foreground: '569cd6' },
+                { token: 'log-level-debug', foreground: 'b5cea8' },
+                { token: 'log-level-trace', foreground: 'c586c0' },
+                { token: 'log-part-level', foreground: 'dcdcdc' },
+                { token: 'log-part-message', foreground: 'dcdcdc' },
                 { token: 'log-literal', foreground: '555555' }
             ],
             colors: {
-                'editor.background': '#0d1b2a',
-                'editor.foreground': '#e0e1dd',
-                'editorCursor.foreground': '#61dafb',
+                'editor.background': '#1e1e1e',
+                'editor.foreground': '#dcdcdc',
+                'editorCursor.foreground': '#aeafad',
                 
                 // Enhanced Highlighting
-                'editor.lineHighlightBackground': '#61dafb25',
-                'editor.lineHighlightBorder': '#61dafb66',
-                'editor.selectionBackground': '#2a3a50aa',
-                'editor.selectionHighlightBackground': '#61dafb44',
+                'editor.lineHighlightBackground': '#2d3032',
+                'editor.lineHighlightBorder': '#3a3d41',
+                'editor.selectionBackground': '#3a3d41',
+                'editor.selectionHighlightBackground': '#264f78',
                 
-                'editorWidget.background': '#1b263b',
-                'editorWidget.border': '#61dafb',
-                'scrollbarSlider.background': '#2a3a50',
-                'scrollbarSlider.hoverBackground': '#4a5a70',
+                'editorWidget.background': '#252526',
+                'editorWidget.border': '#569cd6',
+                'scrollbarSlider.background': '#3c3c3e',
+                'scrollbarSlider.hoverBackground': '#4a4a4a',
             }
         });
-        monaco.editor.setTheme('heroDark');
+        monaco.editor.setTheme('riderIslandsDark');
 
         const commonEditorOptions = {
             readOnly: true,
             domReadOnly: true,
             fontFamily: '"Consolas", "Courier New", monospace',
-            fontSize: 12,
+            fontSize: 14,
             lineNumbers: 'on',
             scrollBeyondLastLine: false,
             wordWrap: 'on',
