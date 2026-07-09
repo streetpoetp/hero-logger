@@ -4,98 +4,67 @@
 <meta charset="UTF-8">
 <title>Hero.LogViewer</title>
 <style>
+    :root {
+        --bg-deep-blue: #0d1b2a;
+        --bg-mid-blue: #1b263b;
+        --bg-light-blue: #2a3a50;
+        --text-cream: #e0e1dd;
+        --accent-cyan: #61dafb;
+        --accent-yellow: #f7b801;
+        --accent-red: #f45b69;
+        --accent-gray: #778da9;
+        --accent-lavender: #b39ddb;
+        --accent-teal: #80cbc4;
+    }
+
     body {
-        margin: 0; background: #1e1e1e; color: #ddd;
+        margin: 0; background: var(--bg-deep-blue); color: var(--text-cream);
         font-family: "Consolas", "Courier New", monospace;
         font-size: 12px; display: flex; flex-direction: column; height: 100vh;
         overflow: hidden;
     }
 
-    /* Dark Scrollbar */
-    ::-webkit-scrollbar {
-        width: 12px;
-        height: 12px;
-    }
-    ::-webkit-scrollbar-track {
-        background: #252526;
-    }
+    /* Dark Scrollbar for the page */
+    ::-webkit-scrollbar { width: 12px; height: 12px; }
+    ::-webkit-scrollbar-track { background: var(--bg-mid-blue); }
     ::-webkit-scrollbar-thumb {
-        background-color: #4f4f4f;
+        background-color: var(--bg-light-blue);
         border-radius: 6px;
-        border: 2px solid #252526;
+        border: 2px solid var(--bg-mid-blue);
     }
-    ::-webkit-scrollbar-thumb:hover {
-        background-color: #6a6a6a;
-    }
-    ::-webkit-scrollbar-corner {
-        background: transparent;
-    }
+    ::-webkit-scrollbar-thumb:hover { background-color: #4a5a70; }
+    ::-webkit-scrollbar-corner { background: transparent; }
 
     .toolbar {
-        height: 32px; background: #252526; display: flex; align-items: center;
+        height: 32px; background: var(--bg-mid-blue); display: flex; align-items: center;
         gap: 8px; padding: 0 8px; border-bottom: 1px solid #000; flex-shrink: 0;
     }
     button, input, select {
-        background: #3c3c3c; color: #ddd; border: 1px solid #555;
+        background: var(--bg-light-blue); color: var(--text-cream); border: 1px solid #000;
         padding: 4px 8px; border-radius: 2px; font-family: inherit; font-size: 12px;
     }
-    input:focus { outline: 1px solid #007acc; }
+    input:focus { outline: 1px solid var(--accent-cyan); }
     #parserTemplate { width: 350px; }
     #searchInput { flex-grow: 1; }
-    #searchInput.active-filter { color: #4fc1ff; } /* Highlight color for active filter */
+    #searchInput.active-filter { color: var(--accent-cyan); }
 
     .split-container {
         display: flex; flex-direction: column; flex: 1; min-height: 0;
     }
     .view-pane {
-        flex: 1; position: relative; overflow: auto; background: #1e1e1e;
+        flex: 1; position: relative; overflow: hidden; /* Monaco handles its own scrolling */
     }
     .splitter {
-        height: 4px; background: #333; cursor: row-resize; flex-shrink: 0;
+        height: 4px; background: var(--bg-mid-blue); cursor: row-resize; flex-shrink: 0;
     }
-
-    .v-row {
-        position: absolute; left: 0; right: 0;
-        display: flex; align-items: flex-start; padding: 4px;
-        border-bottom: 1px solid #2a2a2a; box-sizing: border-box;
-        cursor: pointer;
-    }
-    .v-row:hover { background: #2a2d2e; }
-    .v-row.selected { background: #04395e; }
-
-    .line-num {
-        width: 50px; color: #858585; text-align: right;
-        margin-right: 10px; flex-shrink: 0; user-select: none; padding-top: 2px;
-    }
-    
-    .log-content {
-        display: flex; flex-direction: column; flex: 1; overflow: hidden;
-    }
-    .log-header {
-        display: flex; gap: 12px; white-space: pre;
-    }
-    .log-field { flex-shrink: 0; }
-    .log-logger, .log-message {
-        white-space: pre-wrap;
-        word-break: break-all;
-        margin-top: 2px;
-    }
-    .log-logger { color: #858585; }
-
-    .level-TRACE { color: #808080; }
-    .level-DEBUG { color: #a9a9a9; }
-    .level-INFO  { color: #4fc1ff; }
-    .level-WARN  { color: #cca700; }
-    .level-ERROR { color: #f48771; font-weight: bold; }
-    .level-FATAL { color: #ff0000; font-weight: bold; }
 </style>
 </head>
 <body>
 
 <div class="toolbar">
     <input type="file" id="fileInput">
-    <input id="parserTemplate" value="${date} [${thread}] ${level} ${logger} - ${message}" title="NLog Parser Template">
-    <input id="searchInput" placeholder="Filter by text, /regex/, or field:value (e.g., level:ERROR) and press Enter">
+    <input id="parserTemplate" value="${timestamp} [${level}] [${thread}] ${logger} ${message}" title="Log Parser Template">
+    <input id="searchInput" placeholder="Filter with text or /regex/ and press Enter">
 </div>
 
 <div class="split-container">
@@ -104,306 +73,228 @@
     <div id="filterView" class="view-pane"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs/loader.js"></script>
+
 <script>
-class ParserCompiler {
-    static compile(template) {
-        let regexStr = template.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
-        regexStr = regexStr.replace(/\\$\\{([a-zA-Z0-9_]+)\\}/g, '(?<$1>.*?)');
-        regexStr = regexStr.replace(/\(\?\<message\>\.\*\?\)/, '(?<message>.*)');
-        return new RegExp("^" + regexStr + "$");
-    }
-}
+    let mainEditor;
+    let filterEditor;
+    let rawLogLines = [];
+    let filteredDataMap = []; 
+    let isSyncing = false; 
+    
+    // We use a counter to generate a unique language ID every time the template changes
+    let languageCounter = 0;
+    let currentLanguageId = 'hero-log-0';
 
-class LogModel {
-    constructor() {
-        this.rawLines = [];
-        this.parsedEntries = [];
-        this.filteredIndices = [];
-        this.fields = [];
-    }
-
-    parse(lines, templateStr) {
-        this.rawLines = lines;
-        this.parsedEntries = [];
-        this.fields = [];
-
-        const regex = ParserCompiler.compile(templateStr);
-        const fieldMatches = [...templateStr.matchAll(/\$\{([a-zA-Z0-9_]+)\}/g)];
-        this.fields = fieldMatches.map(m => m[1]);
-
-        let currentEntry = null;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (!line.trim()) continue;
-
-            const match = line.match(regex);
-
-            if (match && match.groups) {
-                currentEntry = { index: this.parsedEntries.length, fields: match.groups, raw: line };
-                this.parsedEntries.push(currentEntry);
-            } else if (currentEntry) {
-                currentEntry.fields.message += "\n" + line;
-                currentEntry.raw += "\n" + line;
-            } else {
-                this.parsedEntries.push({ index: this.parsedEntries.length, fields: {}, raw: line });
+    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
+    require(['vs/editor/editor.main'], function() {
+        
+        // Define theme once
+        monaco.editor.defineTheme('islandDark', {
+            base: 'vs-dark',
+            inherit: true,
+            rules: [
+                { token: 'log-part-timestamp', foreground: '85c7f2' },
+                { token: 'log-part-thread', foreground: 'b39ddb' },
+                { token: 'log-part-logger', foreground: '80cbc4' },
+                { token: 'log-level-error', foreground: 'f45b69', fontStyle: 'bold' },
+                { token: 'log-level-warn', foreground: 'f7b801' },
+                { token: 'log-level-info', foreground: '61dafb' },
+                { token: 'log-level-debug', foreground: 'b0b1ad' },
+                { token: 'log-level-trace', foreground: '778da9' },
+            ],
+            colors: {
+                'editor.background': '#0d1b2a',
+                'editor.foreground': '#e0e1dd',
+                'editorCursor.foreground': '#61dafb',
+                'editor.lineHighlightBackground': '#1b263b',
+                'editor.selectionBackground': '#2a3a50',
+                'editorWidget.background': '#1b263b',
+                'editorWidget.border': '#000',
+                'scrollbar.shadow': '#00000000',
+                'scrollbarSlider.background': '#2a3a50',
+                'scrollbarSlider.hoverBackground': '#4a5a70',
+                'scrollbarSlider.activeBackground': '#4a5a70',
             }
+        });
+        monaco.editor.setTheme('islandDark');
+
+        const commonEditorOptions = {
+            readOnly: true,
+            domReadOnly: true,
+            fontFamily: '"Consolas", "Courier New", monospace',
+            fontSize: 12,
+            lineNumbers: 'on',
+            scrollBeyondLastLine: false,
+            wordWrap: 'on',
+            minimap: { enabled: false },
+            renderLineHighlight: 'gutter',
+            occurrencesHighlight: false,
+        };
+
+        // Initialize the first language state
+        updateLanguageDefinition(document.getElementById('parserTemplate').value);
+
+        mainEditor = monaco.editor.create(document.getElementById('mainView'), {
+            ...commonEditorOptions,
+            model: monaco.editor.createModel("Drop a log file here to begin.", currentLanguageId),
+        });
+
+        filterEditor = monaco.editor.create(document.getElementById('filterView'), {
+            ...commonEditorOptions,
+            model: monaco.editor.createModel("Filtered results will appear here.", currentLanguageId),
+        });
+
+        document.getElementById('fileInput').addEventListener('change', handleFile);
+        document.getElementById('searchInput').addEventListener('keydown', handleSearch);
+        document.getElementById('parserTemplate').addEventListener('input', () => {
+            updateLanguageDefinition(document.getElementById('parserTemplate').value);
+        });
+        
+        setupEditorSync();
+    });
+
+    function updateLanguageDefinition(template) {
+        const fieldNames = [...template.matchAll(/\$\{([a-zA-Z0-9_]+)\}/g)].map(m => m[1]);
+        if (fieldNames.length === 0) return;
+
+        let regexStr = template.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+        
+        fieldNames.forEach((name, index) => {
+            const isLastField = index === fieldNames.length - 1;
+            const captureGroup = isLastField ? '(.*)' : '(.*?)';
+            regexStr = regexStr.replace(`\\$\\{${name}\\}`, captureGroup);
+        });
+
+        const finalRegex = new RegExp('^' + regexStr + '$');
+
+        // Create a unique Language ID to force Monaco to re-parse dynamic changes
+        languageCounter++;
+        currentLanguageId = `hero-log-${languageCounter}`;
+        monaco.languages.register({ id: currentLanguageId });
+
+        monaco.languages.setMonarchTokensProvider(currentLanguageId, {
+            ignoreCase: true, // Crucial: Makes the token cases below case-insensitive
+            tokenizer: {
+                root: [
+                    [
+                        finalRegex,
+                        fieldNames.map(name => {
+                            if (name === 'level') {
+                                return {
+                                    cases: {
+                                        'error': 'log-level-error',
+                                        'fatal': 'log-level-error',
+                                        'exception': 'log-level-error',
+                                        'warn': 'log-level-warn',
+                                        'warning': 'log-level-warn',
+                                        'info': 'log-level-info',
+                                        'debug': 'log-level-debug',
+                                        'trace': 'log-level-trace',
+                                        '@default': 'log-part-level',
+                                    }
+                                };
+                            }
+                            return `log-part-${name}`;
+                        })
+                    ]
+                ]
+            }
+        });
+
+        // Apply new language rules to existing editors immediately
+        if (mainEditor && mainEditor.getModel()) {
+            monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
         }
-        this.applyFilter(document.getElementById('searchInput').value);
+        if (filterEditor && filterEditor.getModel()) {
+            monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
+        }
     }
 
-    applyFilter(query) {
+    function handleFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            rawLogLines = ev.target.result.split(/\r?\n/);
+            mainEditor.setModel(monaco.editor.createModel(ev.target.result, currentLanguageId));
+            updateLanguageDefinition(document.getElementById('parserTemplate').value);
+            applyFilter();
+        };
+        reader.readAsText(file);
+    }
+
+    function handleSearch(e) {
+        if (e.key === 'Enter') {
+            applyFilter();
+        }
+    }
+
+    function applyFilter() {
+        const query = document.getElementById('searchInput').value;
         document.getElementById('searchInput').classList.toggle('active-filter', !!query);
-        this.filteredIndices = [];
+
+        filteredDataMap = [];
         if (!query) {
-            this.filteredIndices = this.parsedEntries.map((_, i) => i);
+            filterEditor.setModel(monaco.editor.createModel("", currentLanguageId));
             return;
         }
 
-        const q = query;
-        const fieldQueryMatch = q.match(/^(\w+):(.*)/);
-        const regexMatch = q.match(/^\/(.*)\/([i]?)$/);
-        
         let regex;
+        const regexMatch = query.match(/^\/(.*)\/([i]?)$/);
         if (regexMatch) {
-            try { regex = new RegExp(regexMatch[1], regexMatch[2]); } catch (e) { regex = null; }
-        }
-
-        for (let i = 0; i < this.parsedEntries.length; i++) {
-            const entry = this.parsedEntries[i];
-            let match = false;
-
-            if (fieldQueryMatch) {
-                const key = fieldQueryMatch[1];
-                const value = fieldQueryMatch[2];
-                if (entry.fields[key] && entry.fields[key].toLowerCase().includes(value.toLowerCase())) {
-                    match = true;
-                }
-            } else if (regex) {
-                if (regex.test(entry.raw)) {
-                    match = true;
-                }
-            } else {
-                if (entry.raw.toLowerCase().includes(q.toLowerCase())) {
-                    match = true;
-                }
-            }
-
-            if (match) {
-                this.filteredIndices.push(i);
-            }
-        }
-    }
-}
-
-class VirtualList {
-    constructor(id, container, getRowCount, getRowData) {
-        this.id = id;
-        this.container = container;
-        this.getRowCount = getRowCount;
-        this.getRowData = getRowData;
-        
-        this.rowCache = [];
-        this.visibleNodes = new Map();
-        this.averageHeight = 20; // Initial guess
-        
-        this.spacer = document.createElement('div');
-        this.container.appendChild(this.spacer);
-
-        this.measureNode = document.createElement('div');
-        this.measureNode.className = 'v-row';
-        this.measureNode.style.position = 'absolute';
-        this.measureNode.style.visibility = 'hidden';
-        this.measureNode.style.width = '100%';
-        this.container.appendChild(this.measureNode);
-
-        this.container.addEventListener('scroll', () => this.render());
-        window.addEventListener('resize', () => { this.reset(); this.render(); });
-    }
-
-    reset() {
-        this.rowCache = [];
-        this.visibleNodes.forEach(node => this.container.removeChild(node));
-        this.visibleNodes.clear();
-    }
-
-    update() {
-        this.reset();
-        this.render();
-    }
-
-    render() {
-        const scrollTop = this.container.scrollTop;
-        const viewportHeight = this.container.clientHeight;
-        const totalRows = this.getRowCount();
-
-        let totalHeight = 0;
-        if (this.rowCache.length > 0) {
-            const lastCached = this.rowCache[this.rowCache.length - 1];
-            totalHeight = lastCached.y + lastCached.height;
-            if (this.rowCache.length < totalRows) {
-                this.averageHeight = totalHeight / this.rowCache.length;
-                totalHeight += (totalRows - this.rowCache.length) * this.averageHeight;
-            }
+            try { regex = new RegExp(regexMatch[1], regexMatch[2] || ''); } catch (e) { regex = null; }
         } else {
-            totalHeight = totalRows * this.averageHeight;
+            const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            regex = new RegExp(escapedQuery, 'i');
         }
-        this.spacer.style.height = `${totalHeight}px`;
 
-        let startIndex = 0;
-        for (let i = 0; i < this.rowCache.length; i++) {
-            if (this.rowCache[i].y + this.rowCache[i].height > scrollTop) {
-                startIndex = i;
-                break;
+        if (!regex) {
+             filterEditor.setModel(monaco.editor.createModel("Invalid Regex", currentLanguageId));
+             return;
+        }
+
+        const filteredLines = [];
+        for (let i = 0; i < rawLogLines.length; i++) {
+            const line = rawLogLines[i];
+            if (regex.test(line)) {
+                filteredLines.push(line);
+                filteredDataMap.push({ text: line, originalLineNumber: i + 1 });
             }
-        }
-        startIndex = Math.max(0, startIndex - 5);
-
-        let currentY = this.rowCache[startIndex]?.y || 0;
-        if (startIndex > 0 && !this.rowCache[startIndex]) {
-             currentY = (this.rowCache[startIndex-1].y + this.rowCache[startIndex-1].height);
-        }
-
-        let i = startIndex;
-        while (i < totalRows && currentY < scrollTop + viewportHeight) {
-            let cached = this.rowCache[i];
-            if (!cached) {
-                const height = this.measureRow(i);
-                cached = { y: currentY, height: height };
-                this.rowCache[i] = cached;
-            }
-
-            if (!this.visibleNodes.has(i)) {
-                const node = this.createRow(i, cached);
-                this.container.appendChild(node);
-                this.visibleNodes.set(i, node);
-            }
-            currentY += cached.height;
-            i++;
-        }
-        const endIndex = i;
-
-        for (let [index, node] of this.visibleNodes.entries()) {
-            if (index < startIndex || index >= endIndex) {
-                this.container.removeChild(node);
-                this.visibleNodes.delete(index);
-            }
-        }
-    }
-
-    measureRow(rowIndex) {
-        this.measureNode.innerHTML = this.getRowHtml(this.getRowData(rowIndex));
-        return this.measureNode.offsetHeight;
-    }
-
-    getRowHtml(entry) {
-        let html = `<div class="line-num">${entry.index + 1}</div>`;
-        if (Object.keys(entry.fields).length > 0) {
-            const level = this.escape(entry.fields.level || '').toUpperCase();
-            html += `
-                <div class="log-content">
-                    <div class="log-header">
-                        <span class="log-field level-${level}">${level}</span>
-                        <span class="log-field">${this.escape(entry.fields.date || '')}</span>
-                        <span class="log-field">[${this.escape(entry.fields.thread || '')}]</span>
-                    </div>
-                    <div class="log-logger">${this.escape(entry.fields.logger || '')}</div>
-                    <div class="log-message">${this.escape(entry.fields.message || '')}</div>
-                </div>`;
-        } else {
-            html += `<div class.log-message">${this.escape(entry.raw)}</div>`;
-        }
-        return html;
-    }
-
-    createRow(rowIndex, cached) {
-        const entry = this.getRowData(rowIndex);
-        const div = document.createElement('div');
-        div.className = 'v-row';
-        div.style.top = `${cached.y}px`;
-        div.style.height = `${cached.height}px`;
-        div.innerHTML = this.getRowHtml(entry);
-
-        div.addEventListener('click', () => selectionManager.select(entry.index, this.id));
-        
-        if (entry.index === selectionManager.selectedIndex) {
-            div.classList.add('selected');
         }
         
-        return div;
+        filterEditor.setModel(monaco.editor.createModel(filteredLines.join('\n'), currentLanguageId));
     }
 
-    scrollToIndex(index) {
-        if (this.rowCache[index]) {
-            this.container.scrollTop = this.rowCache[index].y - (this.container.clientHeight / 2);
-        } else {
-            // Estimate position if not measured yet
-            this.container.scrollTop = index * this.averageHeight - (this.container.clientHeight / 2);
-        }
-    }
+    function setupEditorSync() {
+        mainEditor.onDidChangeCursorPosition(e => {
+            if (isSyncing || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
+            
+            const originalLine = e.position.lineNumber;
+            const filterLine = filteredDataMap.findIndex(item => item.originalLineNumber === originalLine);
 
-    escape(str) {
-        return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-}
-
-const model = new LogModel();
-let mainVirtualList = null;
-let filterVirtualList = null;
-
-const selectionManager = {
-    selectedIndex: -1,
-    select(originalIndex, sourceViewId) {
-        if (this.selectedIndex === originalIndex) return;
-        this.selectedIndex = originalIndex;
-
-        mainVirtualList.visibleNodes.forEach((node, i) => node.classList.toggle('selected', model.parsedEntries[i].index === originalIndex));
-        filterVirtualList.visibleNodes.forEach((node, i) => node.classList.toggle('selected', model.parsedEntries[model.filteredIndices[i]].index === originalIndex));
-
-        if (sourceViewId === 'filterView') {
-            mainVirtualList.scrollToIndex(originalIndex);
-        } else {
-            const filterIndex = model.filteredIndices.indexOf(originalIndex);
-            if (filterIndex > -1) {
-                filterVirtualList.scrollToIndex(filterIndex);
+            if (filterLine !== -1) {
+                isSyncing = true;
+                const targetLine = filterLine + 1;
+                filterEditor.revealLineInCenter(targetLine, monaco.editor.ScrollType.Immediate);
+                filterEditor.setSelection(new monaco.Range(targetLine, 1, targetLine, 1));
+                isSyncing = false;
             }
-        }
+        });
+
+        filterEditor.onDidChangeCursorPosition(e => {
+            if (isSyncing || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
+            
+            const mapping = filteredDataMap[e.position.lineNumber - 1];
+            if (mapping) {
+                isSyncing = true;
+                mainEditor.revealLineInCenter(mapping.originalLineNumber, monaco.editor.ScrollType.Immediate);
+                mainEditor.setSelection(new monaco.Range(mapping.originalLineNumber, 1, mapping.originalLineNumber, 1));
+                isSyncing = false;
+            }
+        });
     }
-};
-
-function reparse() {
-    if (model.rawLines.length > 0) {
-        const template = document.getElementById('parserTemplate').value;
-        model.parse(model.rawLines, template);
-        mainVirtualList.update();
-        filterVirtualList.update();
-    }
-}
-
-mainVirtualList = new VirtualList('mainView', document.getElementById('mainView'), () => model.parsedEntries.length, (i) => model.parsedEntries[i]);
-filterVirtualList = new VirtualList('filterView', document.getElementById('filterView'), () => model.filteredIndices.length, (i) => model.parsedEntries[model.filteredIndices[i]]);
-
-document.getElementById('fileInput').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        model.rawLines = ev.target.result.split(/\r?\n/);
-        reparse();
-    };
-    reader.readAsText(file);
-});
-
-document.getElementById('searchInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        model.applyFilter(e.target.value);
-        filterVirtualList.update();
-    }
-});
-
-document.getElementById('parserTemplate').addEventListener('input', reparse);
-
 </script>
 </body>
 </html>
