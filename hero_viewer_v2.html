@@ -40,7 +40,9 @@
         padding: 4px 8px; border-radius: 2px; font-family: inherit; font-size: 12px;
     }
     input:focus { outline: 1px solid #007acc; }
-    #searchInput { flex-grow: 1; } /* Allow search to fill space */
+    #parserTemplate { width: 350px; }
+    #searchInput { flex-grow: 1; }
+    #searchInput.active-filter { color: #4fc1ff; } /* Highlight color for active filter */
 
     .split-container {
         display: flex; flex-direction: column; flex: 1; min-height: 0;
@@ -92,9 +94,8 @@
 
 <div class="toolbar">
     <input type="file" id="fileInput">
-    <input id="parserTemplate" value="${date} [${thread}] ${level} ${logger} - ${message}" style="width: 300px;" title="Parser Template">
-    <input id="searchInput" placeholder="Search (text, regex, or field:value)">
-    <button id="applyBtn">Apply / Parse</button>
+    <input id="parserTemplate" value="${date} [${thread}] ${level} ${logger} - ${message}" title="NLog Parser Template">
+    <input id="searchInput" placeholder="Filter by text, /regex/, or field:value (e.g., level:ERROR) and press Enter">
 </div>
 
 <div class="split-container">
@@ -148,20 +149,25 @@ class LogModel {
                 this.parsedEntries.push({ index: this.parsedEntries.length, fields: {}, raw: line });
             }
         }
-        this.applyFilter("");
+        this.applyFilter(document.getElementById('searchInput').value);
     }
 
     applyFilter(query) {
+        document.getElementById('searchInput').classList.toggle('active-filter', !!query);
         this.filteredIndices = [];
         if (!query) {
             this.filteredIndices = this.parsedEntries.map((_, i) => i);
             return;
         }
 
-        const q = query.toLowerCase();
+        const q = query;
         const fieldQueryMatch = q.match(/^(\w+):(.*)/);
+        const regexMatch = q.match(/^\/(.*)\/([i]?)$/);
+        
         let regex;
-        try { regex = new RegExp(query, "i"); } catch (e) { regex = null; }
+        if (regexMatch) {
+            try { regex = new RegExp(regexMatch[1], regexMatch[2]); } catch (e) { regex = null; }
+        }
 
         for (let i = 0; i < this.parsedEntries.length; i++) {
             const entry = this.parsedEntries[i];
@@ -170,13 +176,17 @@ class LogModel {
             if (fieldQueryMatch) {
                 const key = fieldQueryMatch[1];
                 const value = fieldQueryMatch[2];
-                if (entry.fields[key] && entry.fields[key].toLowerCase().includes(value)) {
+                if (entry.fields[key] && entry.fields[key].toLowerCase().includes(value.toLowerCase())) {
                     match = true;
                 }
-            } else if (regex && regex.test(entry.raw)) {
-                match = true;
-            } else if (entry.raw.toLowerCase().includes(q)) {
-                match = true;
+            } else if (regex) {
+                if (regex.test(entry.raw)) {
+                    match = true;
+                }
+            } else {
+                if (entry.raw.toLowerCase().includes(q.toLowerCase())) {
+                    match = true;
+                }
             }
 
             if (match) {
@@ -301,7 +311,7 @@ class VirtualList {
                     <div class="log-message">${this.escape(entry.fields.message || '')}</div>
                 </div>`;
         } else {
-            html += `<div class="log-message">${this.escape(entry.raw)}</div>`;
+            html += `<div class.log-message">${this.escape(entry.raw)}</div>`;
         }
         return html;
     }
@@ -347,7 +357,6 @@ const selectionManager = {
         if (this.selectedIndex === originalIndex) return;
         this.selectedIndex = originalIndex;
 
-        // Re-render visible rows to update selection highlight
         mainVirtualList.visibleNodes.forEach((node, i) => node.classList.toggle('selected', model.parsedEntries[i].index === originalIndex));
         filterVirtualList.visibleNodes.forEach((node, i) => node.classList.toggle('selected', model.parsedEntries[model.filteredIndices[i]].index === originalIndex));
 
@@ -362,6 +371,15 @@ const selectionManager = {
     }
 };
 
+function reparse() {
+    if (model.rawLines.length > 0) {
+        const template = document.getElementById('parserTemplate').value;
+        model.parse(model.rawLines, template);
+        mainVirtualList.update();
+        filterVirtualList.update();
+    }
+}
+
 mainVirtualList = new VirtualList('mainView', document.getElementById('mainView'), () => model.parsedEntries.length, (i) => model.parsedEntries[i]);
 filterVirtualList = new VirtualList('filterView', document.getElementById('filterView'), () => model.filteredIndices.length, (i) => model.parsedEntries[model.filteredIndices[i]]);
 
@@ -371,29 +389,21 @@ document.getElementById('fileInput').addEventListener('change', (e) => {
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-        const lines = ev.target.result.split(/\r?\n/);
-        const template = document.getElementById('parserTemplate').value;
-        
-        model.parse(lines, template);
-        mainVirtualList.update();
-        filterVirtualList.update();
+        model.rawLines = ev.target.result.split(/\r?\n/);
+        reparse();
     };
     reader.readAsText(file);
 });
 
-document.getElementById('searchInput').addEventListener('input', (e) => {
-    model.applyFilter(e.target.value);
-    filterVirtualList.update();
-});
-
-document.getElementById('applyBtn').addEventListener('click', () => {
-    if (model.rawLines.length > 0) {
-        const template = document.getElementById('parserTemplate').value;
-        model.parse(model.rawLines, template);
-        mainVirtualList.update();
+document.getElementById('searchInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        model.applyFilter(e.target.value);
         filterVirtualList.update();
     }
 });
+
+document.getElementById('parserTemplate').addEventListener('input', reparse);
+
 </script>
 </body>
 </html>
