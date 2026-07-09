@@ -45,24 +45,26 @@
         #mainView { flex: 1 1 50%; }
         #filterView { flex: 1 1 50%; background: var(--bg-mid-blue); }
 
-        /* Toolbar nested inside Filter View */
+        /* Toolbar inside Filter View */
         .toolbar {
-            height: 32px; background: var(--bg-mid-blue); display: flex; align-items: center;
-            gap: 8px; padding: 0 8px; border-bottom: 1px solid #000; flex-shrink: 0;
+            height: 36px; background: var(--bg-mid-blue); display: flex; align-items: center;
+            gap: 12px; padding: 0 12px; border-bottom: 1px solid #000; flex-shrink: 0;
             z-index: 20;
         }
 
-        /* Editor containers within panes */
         .editor-container { flex: 1; width: 100%; min-height: 0; }
 
-        button, input, select {
+        button, input {
             background: var(--bg-light-blue); color: var(--text-cream); border: 1px solid #000;
-            padding: 4px 8px; border-radius: 2px; font-family: inherit; font-size: 11px;
+            padding: 5px 10px; border-radius: 2px; font-family: inherit; font-size: 12px;
         }
-        input:focus { outline: 1px solid var(--accent-cyan); }
-        #parserTemplate { width: 300px; }
-        #searchInput { flex-grow: 1; }
-        #searchInput.active-filter { color: var(--accent-cyan); font-weight: bold; }
+
+        #fileInput { width: 220px; }
+
+        /* Stretches the search input to take the rest of the space */
+        #searchInput { flex: 1; min-width: 200px; }
+        #searchInput:focus { outline: 1px solid var(--accent-cyan); border-color: var(--accent-cyan); }
+        #searchInput.active-filter { color: var(--accent-cyan); font-weight: bold; border-color: var(--accent-cyan); }
 
         .splitter {
             height: 8px; background: #000; cursor: row-resize; flex-shrink: 0;
@@ -72,9 +74,7 @@
         .splitter::after {
             content: "•••"; color: var(--accent-gray); letter-spacing: 2px; font-size: 10px;
         }
-        .splitter:hover, .splitter.dragging {
-            background: var(--accent-cyan);
-        }
+        .splitter:hover, .splitter.dragging { background: var(--accent-cyan); }
     </style>
 </head>
 <body>
@@ -92,8 +92,7 @@
     <div id="filterView" class="view-pane">
         <div class="toolbar">
             <input type="file" id="fileInput">
-            <input id="parserTemplate" value="${timestamp} [${level}] [${thread}] ${logger} ${message}" title="Log Parser Template">
-            <input id="searchInput" placeholder="Filter regex (e.g. ERROR or /ERROR|WARN/i) + Enter">
+            <input id="searchInput" placeholder="Search / Filter (Regex supported: /ERROR|WARN/i) - Press Enter to apply">
         </div>
         <div id="filterEditorContainer" class="editor-container"></div>
     </div>
@@ -102,6 +101,13 @@
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs/loader.js"></script>
 
 <script>
+    /** 
+     * USER CUSTOMIZATION: EDIT THIS TEMPLATE
+     * Use ${name} syntax to define parts of your log line.
+     * Use ${level} specifically to enable color-coding of ERROR/WARN/INFO.
+     */
+    const LOG_FORMAT_TEMPLATE = "${timestamp} [${level}] [${thread}] ${logger} ${message}";
+
     let mainEditor;
     let filterEditor;
     let rawLogLines = [];
@@ -134,9 +140,9 @@
                 'editor.foreground': '#e0e1dd',
                 'editorCursor.foreground': '#61dafb',
                 
-                // ENHANCED HIGHLIGHTING
-                'editor.lineHighlightBackground': '#61dafb25', // Subtle cyan tint
-                'editor.lineHighlightBorder': '#61dafb66',     // Visible cyan border "glow"
+                // Enhanced Highlighting
+                'editor.lineHighlightBackground': '#61dafb25',
+                'editor.lineHighlightBorder': '#61dafb66',
                 'editor.selectionBackground': '#2a3a50aa',
                 'editor.selectionHighlightBackground': '#61dafb44',
                 
@@ -157,16 +163,16 @@
             scrollBeyondLastLine: false,
             wordWrap: 'on',
             minimap: { enabled: false },
-            renderLineHighlight: 'all', // Ensures highlight is distinct across the whole row
-            renderLineHighlightOnlyWhenFocus: false, // Keep highlight visible when clicking toolbar
+            renderLineHighlight: 'all',
+            renderLineHighlightOnlyWhenFocus: false,
             automaticLayout: true 
         };
 
-        updateLanguageDefinition(document.getElementById('parserTemplate').value);
+        updateLanguageDefinition(LOG_FORMAT_TEMPLATE);
 
         mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), {
             ...commonEditorOptions,
-            model: monaco.editor.createModel("Select a file to begin analysis.", currentLanguageId),
+            model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.", currentLanguageId),
         });
 
         filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), {
@@ -176,9 +182,6 @@
 
         document.getElementById('fileInput').addEventListener('change', handleFile);
         document.getElementById('searchInput').addEventListener('keydown', handleSearch);
-        document.getElementById('parserTemplate').addEventListener('input', () => {
-            updateLanguageDefinition(document.getElementById('parserTemplate').value);
-        });
         
         setupEditorSync();
         setupSplitterDrag();
@@ -298,7 +301,7 @@
 
         filteredDataMap = [];
         if (!query) {
-            filterEditor.setModel(monaco.editor.createModel("Enter a filter term and press Enter.", currentLanguageId));
+            filterEditor.setModel(monaco.editor.createModel("", currentLanguageId));
             return;
         }
 
@@ -324,6 +327,7 @@
     }
 
     function setupEditorSync() {
+        // Sync Full View -> Filter View
         mainEditor.onDidChangeCursorPosition(e => {
             if (isSyncing || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
             const originalLine = e.position.lineNumber;
@@ -337,6 +341,7 @@
             }
         });
 
+        // Sync Filter View -> Full View
         filterEditor.onDidChangeCursorPosition(e => {
             if (isSyncing || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
             const mapping = filteredDataMap[e.position.lineNumber - 1];
