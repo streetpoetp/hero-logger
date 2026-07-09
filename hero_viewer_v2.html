@@ -188,7 +188,10 @@
         parseLogTemplate(LOG_FORMAT_TEMPLATE);
         createToggleCheckboxes();
         updateLineParser();
-        updateLanguageDefinition();
+        
+        const initialVisibility = {};
+        templateTokens.forEach(token => initialVisibility[token.partName] = true);
+        updateLanguageDefinition(initialVisibility);
         
         document.getElementById('logPartsContainer').addEventListener('change', (e) => {
             if (e.target.type === 'checkbox') refreshViews();
@@ -252,15 +255,27 @@
         };
     }
 
-    function updateLanguageDefinition() {
+    function updateLanguageDefinition(partVisibility) {
         const actions = [];
         let regexStr = '^';
         
-        for (const token of templateTokens) {
+        const visibleTokens = templateTokens.filter(token => partVisibility[token.partName]);
+
+        if (visibleTokens.length === 0) {
+            languageCounter++;
+            currentLanguageId = `hero-log-${languageCounter}`;
+            monaco.languages.register({ id: currentLanguageId });
+            monaco.languages.setMonarchTokensProvider(currentLanguageId, { tokenizer: { root: [] } });
+            if (mainEditor && mainEditor.getModel()) monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
+            if (filterEditor && filterEditor.getModel()) monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
+            return;
+        }
+
+        for (let i = 0; i < visibleTokens.length; i++) {
+            const token = visibleTokens[i];
             const prefix = token.prefix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
             const suffix = token.suffix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
             
-            // Each part is a capture group in the tokenizer regex
             regexStr += `(${prefix}.*?${suffix})`;
             
             if (token.partName === 'level') {
@@ -278,8 +293,7 @@
                 actions.push(`log-part-${token.partName}`);
             }
             
-            // Add the space separator if it's not the last token
-            if (templateTokens.indexOf(token) < templateTokens.length - 1) {
+            if (i < visibleTokens.length - 1) {
                 regexStr += '( )';
                 actions.push('log-literal');
             }
@@ -293,7 +307,7 @@
             tokenizer: {
                 root: [
                     [new RegExp(regexStr), actions],
-                    [/.*/, 'log-part-message'] // Fallback for non-matching lines
+                    [/.*/, 'log-part-message']
                 ]
             }
         });
@@ -309,6 +323,8 @@
         document.querySelectorAll('#logPartsContainer input[type="checkbox"]').forEach(cb => {
             partVisibility[cb.dataset.part] = cb.checked;
         });
+
+        updateLanguageDefinition(partVisibility);
 
         const lineReconstructor = createLineReconstructor(partVisibility);
 
@@ -390,7 +406,6 @@
         const reader = new FileReader();
         reader.onload = (ev) => {
             rawLogLines = ev.target.result.split(/\r?\n/);
-            // Set a fresh model to clear old state and ensure correct language is applied
             mainEditor.setModel(monaco.editor.createModel("", currentLanguageId));
             filterEditor.setModel(monaco.editor.createModel("", currentLanguageId));
             refreshViews();
