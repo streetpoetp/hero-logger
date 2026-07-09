@@ -62,16 +62,16 @@
 
         #fileInput { width: 220px; }
 
-        #logPartsContainer {
+        #logPartsContainer, #filterLogPartsContainer {
             display: flex; align-items: center; gap: 10px;
         }
-        #logPartsContainer label {
+        #logPartsContainer label, #filterLogPartsContainer label {
             display: flex; align-items: center; gap: 4px; cursor: pointer;
             text-transform: capitalize;
         }
 
         /* Stretches the search input to take the rest of the space */
-        #searchInput { flex: 1; min-width: 200px; }
+        #searchInput { flex: 1; min-width: 100px; }
         #searchInput:focus { outline: 1px solid var(--accent-sky-blue); border-color: var(--accent-sky-blue); }
         #searchInput.active-filter { color: var(--accent-sky-blue); font-weight: bold; border-color: var(--accent-sky-blue); }
 
@@ -105,6 +105,7 @@
     <div id="filterView" class="view-pane">
         <div class="toolbar">
             <input id="searchInput" placeholder="Search / Filter (Regex supported: /ERROR|WARN/i) - Press Enter to apply">
+            <div id="filterLogPartsContainer"></div>
         </div>
         <div id="filterEditorContainer" class="editor-container"></div>
     </div>
@@ -123,7 +124,6 @@
     let mainEditor, filterEditor;
     let rawLogLines = [], filteredDataMap = [];
     let isSyncing = false, languageCounter = 0;
-    let currentLanguageId = 'hero-log-0';
     
     // These will be derived from the template
     let templateTokens;
@@ -174,8 +174,8 @@
 
         initializeFormattingControls();
 
-        mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.", currentLanguageId) });
-        filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Filtered results will appear here.", currentLanguageId) });
+        mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.") });
+        filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Filtered results will appear here.") });
 
         document.getElementById('fileInput').addEventListener('change', handleFile);
         document.getElementById('searchInput').addEventListener('keydown', handleSearch);
@@ -186,15 +186,35 @@
 
     function initializeFormattingControls() {
         parseLogTemplate(LOG_FORMAT_TEMPLATE);
-        createToggleCheckboxes();
+        setupLogPartsControl('logPartsContainer');
+        setupLogPartsControl('filterLogPartsContainer');
         updateLineParser();
-        
-        const initialVisibility = {};
-        templateTokens.forEach(token => initialVisibility[token.partName] = true);
-        updateLanguageDefinition(initialVisibility);
-        
-        document.getElementById('logPartsContainer').addEventListener('change', (e) => {
-            if (e.target.type === 'checkbox') refreshViews();
+    }
+
+    function setupLogPartsControl(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        container.innerHTML = '';
+        templateTokens.forEach(token => {
+            const label = document.createElement('label');
+            label.title = token.partName;
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.dataset.part = token.partName;
+            checkbox.checked = true;
+            
+            const shortName = getShortName(token.partName);
+            
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(` ${shortName}`));
+            container.appendChild(label);
+        });
+
+        container.addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') {
+                refreshViews();
+            }
         });
     }
 
@@ -212,41 +232,11 @@
     }
 
     function getShortName(name) {
-        // Names 4 chars or less are fine as they are.
-        if (name.length <= 4) {
-            return name;
-        }
-        // For longer names, create an abbreviation by removing vowels (except the first letter).
+        if (name.length <= 4) return name;
         const shortName = name[0] + name.substring(1).replace(/[aeiou]/g, '');
-
-        // If the result is too long, truncate to 4 chars.
-        if (shortName.length > 4) {
-            return shortName.substring(0, 4);
-        }
-        // If the result is too short (e.g. "audio" -> "ad"), fallback to simple 3-char truncation.
-        if (shortName.length < 3 && name.length > 2) {
-            return name.substring(0, 3);
-        }
+        if (shortName.length > 4) return shortName.substring(0, 4);
+        if (shortName.length < 3 && name.length > 2) return name.substring(0, 3);
         return shortName;
-    }
-
-    function createToggleCheckboxes() {
-        const container = document.getElementById('logPartsContainer');
-        container.innerHTML = '';
-        templateTokens.forEach(token => {
-            const label = document.createElement('label');
-            label.title = token.partName; // Add full name as a tooltip
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.dataset.part = token.partName;
-            checkbox.checked = true;
-            
-            const shortName = getShortName(token.partName);
-            
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(` ${shortName}`));
-            container.appendChild(label);
-        });
     }
 
     function updateLineParser() {
@@ -254,7 +244,6 @@
             const prefix = token.prefix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
             const suffix = token.suffix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
             const isLastToken = templateTokens.indexOf(token) === templateTokens.length - 1;
-            // The last part is greedy to capture the rest of the line.
             const content = isLastToken ? '(.*)' : '(.*?)';
             return `${prefix}${content}${suffix}`;
         }).join(' ');
@@ -278,91 +267,87 @@
         };
     }
 
-    function updateLanguageDefinition(partVisibility) {
+    function updateLanguageAndContent(editor, partVisibility, newContent) {
+        languageCounter++;
+        const newLanguageId = `hero-log-${languageCounter}`;
+
         const actions = [];
         let regexStr = '^';
-        
         const visibleTokens = templateTokens.filter(token => partVisibility[token.partName]);
 
-        if (visibleTokens.length === 0) {
-            languageCounter++;
-            currentLanguageId = `hero-log-${languageCounter}`;
-            monaco.languages.register({ id: currentLanguageId });
-            monaco.languages.setMonarchTokensProvider(currentLanguageId, { tokenizer: { root: [] } });
-            if (mainEditor && mainEditor.getModel()) monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
-            if (filterEditor && filterEditor.getModel()) monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
-            return;
-        }
-
-        for (let i = 0; i < visibleTokens.length; i++) {
-            const token = visibleTokens[i];
-            const prefix = token.prefix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
-            const suffix = token.suffix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
-            
-            regexStr += `(${prefix}.*?${suffix})`;
-            
-            if (token.partName === 'level') {
-                actions.push({
-                    cases: {
-                        '~^.*\\[(error|fatal|exception|severe)\\].*$': 'log-level-error',
-                        '~^.*\\[(warn|warning)\\].*$': 'log-level-warn',
-                        '~^.*\\[(info)\\].*$': 'log-level-info',
-                        '~^.*\\[(debug)\\].*$': 'log-level-debug',
-                        '~^.*\\[(trace)\\].*$': 'log-level-trace',
-                        '@default': `log-part-${token.partName}`,
-                    }
-                });
-            } else {
-                actions.push(`log-part-${token.partName}`);
-            }
-            
-            if (i < visibleTokens.length - 1) {
-                regexStr += '( )';
-                actions.push('log-literal');
+        if (visibleTokens.length > 0) {
+            for (let i = 0; i < visibleTokens.length; i++) {
+                const token = visibleTokens[i];
+                const prefix = token.prefix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+                const suffix = token.suffix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+                
+                regexStr += `(${prefix}.*?${suffix})`;
+                
+                if (token.partName === 'level') {
+                    actions.push({
+                        cases: {
+                            '~^.*\\[(error|fatal|exception|severe)\\].*$': 'log-level-error',
+                            '~^.*\\[(warn|warning)\\].*$': 'log-level-warn',
+                            '~^.*\\[(info)\\].*$': 'log-level-info',
+                            '~^.*\\[(debug)\\].*$': 'log-level-debug',
+                            '~^.*\\[(trace)\\].*$': 'log-level-trace',
+                            '@default': `log-part-${token.partName}`,
+                        }
+                    });
+                } else {
+                    actions.push(`log-part-${token.partName}`);
+                }
+                
+                if (i < visibleTokens.length - 1) {
+                    regexStr += '( )';
+                    actions.push('log-literal');
+                }
             }
         }
 
-        languageCounter++;
-        currentLanguageId = `hero-log-${languageCounter}`;
-        monaco.languages.register({ id: currentLanguageId });
-        monaco.languages.setMonarchTokensProvider(currentLanguageId, {
+        monaco.languages.register({ id: newLanguageId });
+        monaco.languages.setMonarchTokensProvider(newLanguageId, {
             ignoreCase: true,
             tokenizer: {
-                root: [
-                    [new RegExp(regexStr), actions],
-                    [/.*/, 'log-part-message']
-                ]
+                root: visibleTokens.length > 0 ? [[new RegExp(regexStr), actions], [/.*/, 'log-part-message']] : []
             }
         });
 
-        if (mainEditor && mainEditor.getModel()) monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
-        if (filterEditor && filterEditor.getModel()) monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
+        const model = editor.getModel();
+        monaco.editor.setModelLanguage(model, newLanguageId);
+
+        if (model.getValue() !== newContent) {
+            model.setValue(newContent);
+        }
+    }
+
+    function getPartVisibility(containerId) {
+        const visibility = {};
+        document.querySelectorAll(`#${containerId} input[type="checkbox"]`).forEach(cb => {
+            visibility[cb.dataset.part] = cb.checked;
+        });
+        return visibility;
     }
 
     function refreshViews() {
         if (!rawLogLines.length) return;
 
-        const partVisibility = {};
-        document.querySelectorAll('#logPartsContainer input[type="checkbox"]').forEach(cb => {
-            partVisibility[cb.dataset.part] = cb.checked;
-        });
+        // Handle Main View
+        const mainPartVisibility = getPartVisibility('logPartsContainer');
+        const mainLineReconstructor = createLineReconstructor(mainPartVisibility);
+        const newMainContent = rawLogLines.map(mainLineReconstructor).join('\n');
+        updateLanguageAndContent(mainEditor, mainPartVisibility, newMainContent);
 
-        updateLanguageDefinition(partVisibility);
-
-        const lineReconstructor = createLineReconstructor(partVisibility);
-
-        // Update main editor
-        const newMainContent = rawLogLines.map(lineReconstructor).join('\n');
-        if (mainEditor.getModel().getValue() !== newMainContent) {
-            mainEditor.getModel().setValue(newMainContent);
-        }
-
-        // Update filter editor
+        // Handle Filter View
+        const filterPartVisibility = getPartVisibility('filterLogPartsContainer');
+        const filterLineReconstructor = createLineReconstructor(filterPartVisibility);
+        
         const query = document.getElementById('searchInput').value.trim();
         document.getElementById('searchInput').classList.toggle('active-filter', !!query);
 
         filteredDataMap = [];
         let newFilteredContent = "";
+        let filteredRawLines = [];
 
         if (query) {
             let regex;
@@ -374,21 +359,17 @@
             }
 
             if (regex) {
-                const filteredLines = [];
                 for (let i = 0; i < rawLogLines.length; i++) {
                     if (regex.test(rawLogLines[i])) {
-                        filteredLines.push(rawLogLines[i]);
+                        filteredRawLines.push(rawLogLines[i]);
                         filteredDataMap.push({ text: rawLogLines[i], originalLineNumber: i + 1 });
                     }
                 }
-                newFilteredContent = filteredLines.map(lineReconstructor).join('\n');
             }
         }
         
-        const filterModel = filterEditor.getModel();
-        if (filterModel.getValue() !== newFilteredContent) {
-            filterModel.setValue(newFilteredContent || "Filtered results will appear here.");
-        }
+        newFilteredContent = filteredRawLines.map(filterLineReconstructor).join('\n');
+        updateLanguageAndContent(filterEditor, filterPartVisibility, newFilteredContent || (query ? "No results found." : "Filtered results will appear here."));
     }
 
     function setupSplitterDrag() {
@@ -429,8 +410,8 @@
         const reader = new FileReader();
         reader.onload = (ev) => {
             rawLogLines = ev.target.result.split(/\r?\n/);
-            mainEditor.setModel(monaco.editor.createModel("", currentLanguageId));
-            filterEditor.setModel(monaco.editor.createModel("", currentLanguageId));
+            mainEditor.setModel(monaco.editor.createModel(""));
+            filterEditor.setModel(monaco.editor.createModel(""));
             refreshViews();
         };
         reader.readAsText(file);
