@@ -8,10 +8,29 @@
         margin: 0; background: #1e1e1e; color: #ddd;
         font-family: "Consolas", "Courier New", monospace;
         font-size: 12px; display: flex; flex-direction: column; height: 100vh;
-        overflow: hidden; /* Prevent page scrolling, we virtualize */
+        overflow: hidden;
     }
 
-    /* Minimal Toolbar */
+    /* Dark Scrollbar */
+    ::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #252526;
+    }
+    ::-webkit-scrollbar-thumb {
+        background-color: #4f4f4f;
+        border-radius: 6px;
+        border: 2px solid #252526;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background-color: #6a6a6a;
+    }
+    ::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+
     .toolbar {
         height: 32px; background: #252526; display: flex; align-items: center;
         gap: 8px; padding: 0 8px; border-bottom: 1px solid #000; flex-shrink: 0;
@@ -21,8 +40,8 @@
         padding: 4px 8px; border-radius: 2px; font-family: inherit; font-size: 12px;
     }
     input:focus { outline: 1px solid #007acc; }
+    #searchInput { flex-grow: 1; } /* Allow search to fill space */
 
-    /* Split View Container */
     .split-container {
         display: flex; flex-direction: column; flex: 1; min-height: 0;
     }
@@ -33,54 +52,39 @@
         height: 4px; background: #333; cursor: row-resize; flex-shrink: 0;
     }
 
-    /* Virtual DOM Row Styles */
     .v-row {
-        position: absolute; left: 0; right: 0; height: 56px; /* Adjusted for vertical layout */
+        position: absolute; left: 0; right: 0;
         display: flex; align-items: flex-start; padding: 4px;
         border-bottom: 1px solid #2a2a2a; box-sizing: border-box;
-        overflow: hidden; cursor: pointer;
+        cursor: pointer;
     }
     .v-row:hover { background: #2a2d2e; }
     .v-row.selected { background: #04395e; }
 
     .line-num {
-        width: 60px; color: #858585; text-align: right;
-        margin-right: 12px; flex-shrink: 0; user-select: none; padding-top: 2px;
+        width: 50px; color: #858585; text-align: right;
+        margin-right: 10px; flex-shrink: 0; user-select: none; padding-top: 2px;
     }
     
     .log-content {
-        display: flex;
-        flex-direction: column;
-        flex: 1;
-        overflow: hidden;
+        display: flex; flex-direction: column; flex: 1; overflow: hidden;
     }
     .log-header {
-        display: flex;
-        gap: 12px;
-        white-space: pre;
+        display: flex; gap: 12px; white-space: pre;
     }
-    .log-field {
-        flex-shrink: 0;
-    }
-    .log-logger {
-        color: #858585;
-        white-space: pre;
+    .log-field { flex-shrink: 0; }
+    .log-logger, .log-message {
+        white-space: pre-wrap;
+        word-break: break-all;
         margin-top: 2px;
     }
-    .log-message {
-        flex: 1;
-        white-space: pre;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        margin-top: 2px;
-    }
+    .log-logger { color: #858585; }
 
-    /* Dynamic Highlight Classes */
     .level-TRACE { color: #808080; }
     .level-DEBUG { color: #a9a9a9; }
     .level-INFO  { color: #4fc1ff; }
     .level-WARN  { color: #cca700; }
-    .level-ERROR { color: #f48771; font-weight: bold;}
+    .level-ERROR { color: #f48771; font-weight: bold; }
     .level-FATAL { color: #ff0000; font-weight: bold; }
 </style>
 </head>
@@ -89,7 +93,7 @@
 <div class="toolbar">
     <input type="file" id="fileInput">
     <input id="parserTemplate" value="${date} [${thread}] ${level} ${logger} - ${message}" style="width: 300px;" title="Parser Template">
-    <input id="searchInput" placeholder="Search (text, regex, or field:value)" style="width: 250px;">
+    <input id="searchInput" placeholder="Search (text, regex, or field:value)">
     <button id="applyBtn">Apply / Parse</button>
 </div>
 
@@ -100,10 +104,6 @@
 </div>
 
 <script>
-/**
- * SUBSYSTEM 1: Dynamic Parser Compiler
- * Turns "${date} [${thread}] ${level}" into a JS Regex with Named Capture Groups
- */
 class ParserCompiler {
     static compile(template) {
         let regexStr = template.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
@@ -113,9 +113,6 @@ class ParserCompiler {
     }
 }
 
-/**
- * SUBSYSTEM 2: Data Model
- */
 class LogModel {
     constructor() {
         this.rawLines = [];
@@ -142,17 +139,11 @@ class LogModel {
             const match = line.match(regex);
 
             if (match && match.groups) {
-                currentEntry = {
-                    index: this.parsedEntries.length,
-                    fields: match.groups,
-                    raw: line
-                };
+                currentEntry = { index: this.parsedEntries.length, fields: match.groups, raw: line };
                 this.parsedEntries.push(currentEntry);
             } else if (currentEntry) {
-                if (currentEntry.fields.message !== undefined) {
-                    currentEntry.fields.message += "\n" + line;
-                    currentEntry.raw += "\n" + line;
-                }
+                currentEntry.fields.message += "\n" + line;
+                currentEntry.raw += "\n" + line;
             } else {
                 this.parsedEntries.push({ index: this.parsedEntries.length, fields: {}, raw: line });
             }
@@ -163,18 +154,14 @@ class LogModel {
     applyFilter(query) {
         this.filteredIndices = [];
         if (!query) {
-            this.filteredIndices = this.parsedEntries.map(e => e.index);
+            this.filteredIndices = this.parsedEntries.map((_, i) => i);
             return;
         }
 
         const q = query.toLowerCase();
         const fieldQueryMatch = q.match(/^(\w+):(.*)/);
         let regex;
-        try {
-            regex = new RegExp(query, "i");
-        } catch (e) {
-            regex = null;
-        }
+        try { regex = new RegExp(query, "i"); } catch (e) { regex = null; }
 
         for (let i = 0; i < this.parsedEntries.length; i++) {
             const entry = this.parsedEntries[i];
@@ -186,14 +173,10 @@ class LogModel {
                 if (entry.fields[key] && entry.fields[key].toLowerCase().includes(value)) {
                     match = true;
                 }
-            } else if (regex) {
-                if (regex.test(entry.raw)) {
-                    match = true;
-                }
-            } else {
-                if (entry.raw.toLowerCase().includes(q)) {
-                    match = true;
-                }
+            } else if (regex && regex.test(entry.raw)) {
+                match = true;
+            } else if (entry.raw.toLowerCase().includes(q)) {
+                match = true;
             }
 
             if (match) {
@@ -203,9 +186,6 @@ class LogModel {
     }
 }
 
-/**
- * SUBSYSTEM 3: DOM Virtual Renderer
- */
 class VirtualList {
     constructor(id, container, getRowCount, getRowData) {
         this.id = id;
@@ -213,19 +193,32 @@ class VirtualList {
         this.getRowCount = getRowCount;
         this.getRowData = getRowData;
         
-        this.rowHeight = 56; // Fixed height for vertical layout
+        this.rowCache = [];
         this.visibleNodes = new Map();
+        this.averageHeight = 20; // Initial guess
         
         this.spacer = document.createElement('div');
         this.container.appendChild(this.spacer);
 
+        this.measureNode = document.createElement('div');
+        this.measureNode.className = 'v-row';
+        this.measureNode.style.position = 'absolute';
+        this.measureNode.style.visibility = 'hidden';
+        this.measureNode.style.width = '100%';
+        this.container.appendChild(this.measureNode);
+
         this.container.addEventListener('scroll', () => this.render());
-        window.addEventListener('resize', () => this.render());
+        window.addEventListener('resize', () => { this.reset(); this.render(); });
+    }
+
+    reset() {
+        this.rowCache = [];
+        this.visibleNodes.forEach(node => this.container.removeChild(node));
+        this.visibleNodes.clear();
     }
 
     update() {
-        const totalRows = this.getRowCount();
-        this.spacer.style.height = `${totalRows * this.rowHeight}px`;
+        this.reset();
         this.render();
     }
 
@@ -234,8 +227,51 @@ class VirtualList {
         const viewportHeight = this.container.clientHeight;
         const totalRows = this.getRowCount();
 
-        const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight) - 5);
-        const endIndex = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / this.rowHeight) + 5);
+        let totalHeight = 0;
+        if (this.rowCache.length > 0) {
+            const lastCached = this.rowCache[this.rowCache.length - 1];
+            totalHeight = lastCached.y + lastCached.height;
+            if (this.rowCache.length < totalRows) {
+                this.averageHeight = totalHeight / this.rowCache.length;
+                totalHeight += (totalRows - this.rowCache.length) * this.averageHeight;
+            }
+        } else {
+            totalHeight = totalRows * this.averageHeight;
+        }
+        this.spacer.style.height = `${totalHeight}px`;
+
+        let startIndex = 0;
+        for (let i = 0; i < this.rowCache.length; i++) {
+            if (this.rowCache[i].y + this.rowCache[i].height > scrollTop) {
+                startIndex = i;
+                break;
+            }
+        }
+        startIndex = Math.max(0, startIndex - 5);
+
+        let currentY = this.rowCache[startIndex]?.y || 0;
+        if (startIndex > 0 && !this.rowCache[startIndex]) {
+             currentY = (this.rowCache[startIndex-1].y + this.rowCache[startIndex-1].height);
+        }
+
+        let i = startIndex;
+        while (i < totalRows && currentY < scrollTop + viewportHeight) {
+            let cached = this.rowCache[i];
+            if (!cached) {
+                const height = this.measureRow(i);
+                cached = { y: currentY, height: height };
+                this.rowCache[i] = cached;
+            }
+
+            if (!this.visibleNodes.has(i)) {
+                const node = this.createRow(i, cached);
+                this.container.appendChild(node);
+                this.visibleNodes.set(i, node);
+            }
+            currentY += cached.height;
+            i++;
+        }
+        const endIndex = i;
 
         for (let [index, node] of this.visibleNodes.entries()) {
             if (index < startIndex || index >= endIndex) {
@@ -243,36 +279,15 @@ class VirtualList {
                 this.visibleNodes.delete(index);
             }
         }
-
-        for (let i = startIndex; i < endIndex; i++) {
-            if (!this.visibleNodes.has(i)) {
-                const row = this.createRow(i);
-                this.container.appendChild(row);
-                this.visibleNodes.set(i, row);
-            }
-            // Update selection state for visible rows
-            const node = this.visibleNodes.get(i);
-            const entry = this.getRowData(i);
-            if (entry.index === selectionManager.selectedIndex) {
-                node.classList.add('selected');
-            } else {
-                node.classList.remove('selected');
-            }
-        }
     }
 
-    createRow(rowIndex) {
-        const entry = this.getRowData(rowIndex);
-        const div = document.createElement('div');
-        div.className = 'v-row';
-        div.style.top = `${rowIndex * this.rowHeight}px`;
+    measureRow(rowIndex) {
+        this.measureNode.innerHTML = this.getRowHtml(this.getRowData(rowIndex));
+        return this.measureNode.offsetHeight;
+    }
 
-        div.addEventListener('click', () => {
-            selectionManager.select(entry.index, this.id);
-        });
-
+    getRowHtml(entry) {
         let html = `<div class="line-num">${entry.index + 1}</div>`;
-        
         if (Object.keys(entry.fields).length > 0) {
             const level = this.escape(entry.fields.level || '').toUpperCase();
             html += `
@@ -284,18 +299,37 @@ class VirtualList {
                     </div>
                     <div class="log-logger">${this.escape(entry.fields.logger || '')}</div>
                     <div class="log-message">${this.escape(entry.fields.message || '')}</div>
-                </div>
-            `;
+                </div>`;
         } else {
             html += `<div class="log-message">${this.escape(entry.raw)}</div>`;
         }
+        return html;
+    }
 
-        div.innerHTML = html;
+    createRow(rowIndex, cached) {
+        const entry = this.getRowData(rowIndex);
+        const div = document.createElement('div');
+        div.className = 'v-row';
+        div.style.top = `${cached.y}px`;
+        div.style.height = `${cached.height}px`;
+        div.innerHTML = this.getRowHtml(entry);
+
+        div.addEventListener('click', () => selectionManager.select(entry.index, this.id));
+        
+        if (entry.index === selectionManager.selectedIndex) {
+            div.classList.add('selected');
+        }
+        
         return div;
     }
 
     scrollToIndex(index) {
-        this.container.scrollTop = index * this.rowHeight - (this.container.clientHeight / 2) + (this.rowHeight / 2);
+        if (this.rowCache[index]) {
+            this.container.scrollTop = this.rowCache[index].y - (this.container.clientHeight / 2);
+        } else {
+            // Estimate position if not measured yet
+            this.container.scrollTop = index * this.averageHeight - (this.container.clientHeight / 2);
+        }
     }
 
     escape(str) {
@@ -303,9 +337,6 @@ class VirtualList {
     }
 }
 
-/**
- * APP INITIALIZATION & BINDING
- */
 const model = new LogModel();
 let mainVirtualList = null;
 let filterVirtualList = null;
@@ -316,8 +347,9 @@ const selectionManager = {
         if (this.selectedIndex === originalIndex) return;
         this.selectedIndex = originalIndex;
 
-        mainVirtualList.render();
-        filterVirtualList.render();
+        // Re-render visible rows to update selection highlight
+        mainVirtualList.visibleNodes.forEach((node, i) => node.classList.toggle('selected', model.parsedEntries[i].index === originalIndex));
+        filterVirtualList.visibleNodes.forEach((node, i) => node.classList.toggle('selected', model.parsedEntries[model.filteredIndices[i]].index === originalIndex));
 
         if (sourceViewId === 'filterView') {
             mainVirtualList.scrollToIndex(originalIndex);
@@ -330,19 +362,8 @@ const selectionManager = {
     }
 };
 
-mainVirtualList = new VirtualList(
-    'mainView',
-    document.getElementById('mainView'), 
-    () => model.parsedEntries.length,
-    (i) => model.parsedEntries[i]
-);
-
-filterVirtualList = new VirtualList(
-    'filterView',
-    document.getElementById('filterView'), 
-    () => model.filteredIndices.length,
-    (i) => model.parsedEntries[model.filteredIndices[i]]
-);
+mainVirtualList = new VirtualList('mainView', document.getElementById('mainView'), () => model.parsedEntries.length, (i) => model.parsedEntries[i]);
+filterVirtualList = new VirtualList('filterView', document.getElementById('filterView'), () => model.filteredIndices.length, (i) => model.parsedEntries[model.filteredIndices[i]]);
 
 document.getElementById('fileInput').addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -353,10 +374,7 @@ document.getElementById('fileInput').addEventListener('change', (e) => {
         const lines = ev.target.result.split(/\r?\n/);
         const template = document.getElementById('parserTemplate').value;
         
-        console.time("Parse Time");
         model.parse(lines, template);
-        console.timeEnd("Parse Time");
-
         mainVirtualList.update();
         filterVirtualList.update();
     };
@@ -376,7 +394,6 @@ document.getElementById('applyBtn').addEventListener('click', () => {
         filterVirtualList.update();
     }
 });
-
 </script>
 </body>
 </html>
