@@ -7,14 +7,14 @@
     body {
         margin: 0; background: #1e1e1e; color: #ddd;
         font-family: "Consolas", "Courier New", monospace;
-        font-size: 13px; display: flex; flex-direction: column; height: 100vh;
+        font-size: 12px; display: flex; flex-direction: column; height: 100vh;
         overflow: hidden; /* Prevent page scrolling, we virtualize */
     }
 
     /* Minimal Toolbar */
     .toolbar {
-        height: 40px; background: #252526; display: flex; align-items: center;
-        gap: 8px; padding: 0 10px; border-bottom: 1px solid #000; flex-shrink: 0;
+        height: 32px; background: #252526; display: flex; align-items: center;
+        gap: 8px; padding: 0 8px; border-bottom: 1px solid #000; flex-shrink: 0;
     }
     button, input, select {
         background: #3c3c3c; color: #ddd; border: 1px solid #555;
@@ -35,23 +35,44 @@
 
     /* Virtual DOM Row Styles */
     .v-row {
-        position: absolute; left: 0; right: 0; height: 24px;
-        display: flex; align-items: center; padding: 0 4px;
+        position: absolute; left: 0; right: 0; height: 56px; /* Adjusted for vertical layout */
+        display: flex; align-items: flex-start; padding: 4px;
         border-bottom: 1px solid #2a2a2a; box-sizing: border-box;
-        white-space: pre; overflow: hidden;
+        overflow: hidden; cursor: pointer;
     }
     .v-row:hover { background: #2a2d2e; }
     .v-row.selected { background: #04395e; }
 
     .line-num {
-        width: 60px; color: #858585; text-align: right; 
-        margin-right: 12px; flex-shrink: 0; user-select: none;
+        width: 60px; color: #858585; text-align: right;
+        margin-right: 12px; flex-shrink: 0; user-select: none; padding-top: 2px;
+    }
+    
+    .log-content {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        overflow: hidden;
+    }
+    .log-header {
+        display: flex;
+        gap: 12px;
+        white-space: pre;
     }
     .log-field {
-        margin-right: 12px; flex-shrink: 0;
+        flex-shrink: 0;
+    }
+    .log-logger {
+        color: #858585;
+        white-space: pre;
+        margin-top: 2px;
     }
     .log-message {
-        flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        flex: 1;
+        white-space: pre;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: 2px;
     }
 
     /* Dynamic Highlight Classes */
@@ -68,7 +89,7 @@
 <div class="toolbar">
     <input type="file" id="fileInput">
     <input id="parserTemplate" value="${date} [${thread}] ${level} ${logger} - ${message}" style="width: 300px;" title="Parser Template">
-    <input id="searchInput" placeholder="Search (e.g. level:ERROR)" style="width: 250px;">
+    <input id="searchInput" placeholder="Search (text, regex, or field:value)" style="width: 250px;">
     <button id="applyBtn">Apply / Parse</button>
 </div>
 
@@ -85,16 +106,9 @@
  */
 class ParserCompiler {
     static compile(template) {
-        // 1. Escape regex specials, but temporarily protect our ${field} syntax
         let regexStr = template.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
-        
-        // 2. Replace escaped \$\{field\} with named capture groups (?<field>.*?)
-        // Example: \$\{level\} becomes (?<level>.*?)
         regexStr = regexStr.replace(/\\$\\{([a-zA-Z0-9_]+)\\}/g, '(?<$1>.*?)');
-        
-        // 3. Make the message field grab the rest of the line greedily
         regexStr = regexStr.replace(/\(\?\<message\>\.\*\?\)/, '(?<message>.*)');
-        
         return new RegExp("^" + regexStr + "$");
     }
 }
@@ -106,8 +120,8 @@ class LogModel {
     constructor() {
         this.rawLines = [];
         this.parsedEntries = [];
-        this.filteredIndices = []; // Stores indices pointing to parsedEntries
-        this.fields = []; // Discovered fields
+        this.filteredIndices = [];
+        this.fields = [];
     }
 
     parse(lines, templateStr) {
@@ -116,8 +130,6 @@ class LogModel {
         this.fields = [];
 
         const regex = ParserCompiler.compile(templateStr);
-        
-        // Extract field names from template for the registry
         const fieldMatches = [...templateStr.matchAll(/\$\{([a-zA-Z0-9_]+)\}/g)];
         this.fields = fieldMatches.map(m => m[1]);
 
@@ -125,44 +137,66 @@ class LogModel {
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
+            if (!line.trim()) continue;
+
             const match = line.match(regex);
 
             if (match && match.groups) {
                 currentEntry = {
-                    index: i,
+                    index: this.parsedEntries.length,
                     fields: match.groups,
                     raw: line
                 };
                 this.parsedEntries.push(currentEntry);
             } else if (currentEntry) {
-                // Multiline fallback: append to message if it exists
                 if (currentEntry.fields.message !== undefined) {
                     currentEntry.fields.message += "\n" + line;
+                    currentEntry.raw += "\n" + line;
                 }
             } else {
-                // Unparsed raw line
-                this.parsedEntries.push({ index: i, fields: {}, raw: line });
+                this.parsedEntries.push({ index: this.parsedEntries.length, fields: {}, raw: line });
             }
         }
-        
-        this.applyFilter(""); // Reset filter
+        this.applyFilter("");
     }
 
     applyFilter(query) {
+        this.filteredIndices = [];
         if (!query) {
             this.filteredIndices = this.parsedEntries.map(e => e.index);
             return;
         }
 
         const q = query.toLowerCase();
-        this.filteredIndices = [];
-        
+        const fieldQueryMatch = q.match(/^(\w+):(.*)/);
+        let regex;
+        try {
+            regex = new RegExp(query, "i");
+        } catch (e) {
+            regex = null;
+        }
+
         for (let i = 0; i < this.parsedEntries.length; i++) {
             const entry = this.parsedEntries[i];
-            
-            // Simple raw text search for V1. AI can easily upgrade this 
-            // to support field queries like "level:ERROR" later.
-            if (entry.raw.toLowerCase().includes(q)) {
+            let match = false;
+
+            if (fieldQueryMatch) {
+                const key = fieldQueryMatch[1];
+                const value = fieldQueryMatch[2];
+                if (entry.fields[key] && entry.fields[key].toLowerCase().includes(value)) {
+                    match = true;
+                }
+            } else if (regex) {
+                if (regex.test(entry.raw)) {
+                    match = true;
+                }
+            } else {
+                if (entry.raw.toLowerCase().includes(q)) {
+                    match = true;
+                }
+            }
+
+            if (match) {
                 this.filteredIndices.push(i);
             }
         }
@@ -171,19 +205,17 @@ class LogModel {
 
 /**
  * SUBSYSTEM 3: DOM Virtual Renderer
- * Renders ONLY the rows currently visible on screen.
  */
 class VirtualList {
-    constructor(container, getRowCount, getRowData) {
+    constructor(id, container, getRowCount, getRowData) {
+        this.id = id;
         this.container = container;
         this.getRowCount = getRowCount;
         this.getRowData = getRowData;
         
-        this.rowHeight = 24; // Fixed height for speed
+        this.rowHeight = 56; // Fixed height for vertical layout
         this.visibleNodes = new Map();
         
-        // The spacer forces the container to have a native scrollbar 
-        // matching the total size of millions of rows.
         this.spacer = document.createElement('div');
         this.container.appendChild(this.spacer);
 
@@ -202,11 +234,9 @@ class VirtualList {
         const viewportHeight = this.container.clientHeight;
         const totalRows = this.getRowCount();
 
-        // Calculate which rows should be visible
-        const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight) - 2);
-        const endIndex = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / this.rowHeight) + 2);
+        const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight) - 5);
+        const endIndex = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / this.rowHeight) + 5);
 
-        // Remove DOM nodes that are no longer visible
         for (let [index, node] of this.visibleNodes.entries()) {
             if (index < startIndex || index >= endIndex) {
                 this.container.removeChild(node);
@@ -214,12 +244,19 @@ class VirtualList {
             }
         }
 
-        // Add missing DOM nodes
         for (let i = startIndex; i < endIndex; i++) {
             if (!this.visibleNodes.has(i)) {
                 const row = this.createRow(i);
                 this.container.appendChild(row);
                 this.visibleNodes.set(i, row);
+            }
+            // Update selection state for visible rows
+            const node = this.visibleNodes.get(i);
+            const entry = this.getRowData(i);
+            if (entry.index === selectionManager.selectedIndex) {
+                node.classList.add('selected');
+            } else {
+                node.classList.remove('selected');
             }
         }
     }
@@ -230,27 +267,35 @@ class VirtualList {
         div.className = 'v-row';
         div.style.top = `${rowIndex * this.rowHeight}px`;
 
-        // Build the HTML based on parsed fields
+        div.addEventListener('click', () => {
+            selectionManager.select(entry.index, this.id);
+        });
+
         let html = `<div class="line-num">${entry.index + 1}</div>`;
         
-        // If parsed successfully
         if (Object.keys(entry.fields).length > 0) {
-            for (let [key, val] of Object.entries(entry.fields)) {
-                if (key === 'message') {
-                    html += `<div class="log-message">${this.escape(val)}</div>`;
-                } else {
-                    // Inject CSS class for levels automatically
-                    const colorClass = key === 'level' ? `level-${val}` : '';
-                    html += `<div class="log-field ${colorClass}">${this.escape(val)}</div>`;
-                }
-            }
+            const level = this.escape(entry.fields.level || '').toUpperCase();
+            html += `
+                <div class="log-content">
+                    <div class="log-header">
+                        <span class="log-field level-${level}">${level}</span>
+                        <span class="log-field">${this.escape(entry.fields.date || '')}</span>
+                        <span class="log-field">[${this.escape(entry.fields.thread || '')}]</span>
+                    </div>
+                    <div class="log-logger">${this.escape(entry.fields.logger || '')}</div>
+                    <div class="log-message">${this.escape(entry.fields.message || '')}</div>
+                </div>
+            `;
         } else {
-            // Unparsed
             html += `<div class="log-message">${this.escape(entry.raw)}</div>`;
         }
 
         div.innerHTML = html;
         return div;
+    }
+
+    scrollToIndex(index) {
+        this.container.scrollTop = index * this.rowHeight - (this.container.clientHeight / 2) + (this.rowHeight / 2);
     }
 
     escape(str) {
@@ -265,25 +310,44 @@ const model = new LogModel();
 let mainVirtualList = null;
 let filterVirtualList = null;
 
-// Initialize Virtual Lists
+const selectionManager = {
+    selectedIndex: -1,
+    select(originalIndex, sourceViewId) {
+        if (this.selectedIndex === originalIndex) return;
+        this.selectedIndex = originalIndex;
+
+        mainVirtualList.render();
+        filterVirtualList.render();
+
+        if (sourceViewId === 'filterView') {
+            mainVirtualList.scrollToIndex(originalIndex);
+        } else {
+            const filterIndex = model.filteredIndices.indexOf(originalIndex);
+            if (filterIndex > -1) {
+                filterVirtualList.scrollToIndex(filterIndex);
+            }
+        }
+    }
+};
+
 mainVirtualList = new VirtualList(
+    'mainView',
     document.getElementById('mainView'), 
     () => model.parsedEntries.length,
     (i) => model.parsedEntries[i]
 );
 
 filterVirtualList = new VirtualList(
+    'filterView',
     document.getElementById('filterView'), 
     () => model.filteredIndices.length,
     (i) => model.parsedEntries[model.filteredIndices[i]]
 );
 
-// UI Event Listeners
 document.getElementById('fileInput').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // For V1, read whole file (AI can adapt this to chunked reading later)
     const reader = new FileReader();
     reader.onload = (ev) => {
         const lines = ev.target.result.split(/\r?\n/);
@@ -305,7 +369,6 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
 });
 
 document.getElementById('applyBtn').addEventListener('click', () => {
-    // Re-parse with new template
     if (model.rawLines.length > 0) {
         const template = document.getElementById('parserTemplate').value;
         model.parse(model.rawLines, template);
