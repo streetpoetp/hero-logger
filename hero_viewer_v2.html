@@ -1,123 +1,91 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<title>Hero.LogViewer</title>
-<style>
-    :root {
-        --bg-deep-blue: #0d1b2a;
-        --bg-mid-blue: #1b263b;
-        --bg-light-blue: #2a3a50;
-        --text-cream: #e0e1dd;
-        --accent-cyan: #61dafb;
-        --accent-yellow: #f7b801;
-        --accent-red: #f45b69;
-        --accent-gray: #778da9;
-        --accent-lavender: #b39ddb;
-        --accent-teal: #80cbc4;
-    }
+    <meta charset="UTF-8">
+    <title>Hero.LogViewer</title>
+    <style>
+        :root {
+            --bg-deep-blue: #0d1b2a;
+            --bg-mid-blue: #1b263b;
+            --bg-light-blue: #2a3a50;
+            --text-cream: #e0e1dd;
+            --accent-cyan: #61dafb;
+            --accent-yellow: #f7b801;
+            --accent-red: #f45b69;
+            --accent-gray: #778da9;
+            --accent-lavender: #b39ddb;
+            --accent-teal: #80cbc4;
+        }
 
-    body {
-        margin: 0; background: var(--bg-deep-blue); color: var(--text-cream);
-        font-family: "Consolas", "Courier New", monospace;
-        font-size: 12px; display: flex; flex-direction: column; height: 100vh;
-        overflow: hidden;
-    }
+        body {
+            margin: 0; background: var(--bg-deep-blue); color: var(--text-cream);
+            font-family: "Consolas", "Courier New", monospace;
+            font-size: 12px; display: flex; flex-direction: column; height: 100vh;
+            overflow: hidden;
+        }
 
-    /* Dark Scrollbar for the page */
-    ::-webkit-scrollbar { width: 12px; height: 12px; }
-    ::-webkit-scrollbar-track { background: var(--bg-mid-blue); }
-    ::-webkit-scrollbar-thumb {
-        background-color: var(--bg-light-blue);
-        border-radius: 6px;
-        border: 2px solid var(--bg-mid-blue);
-    }
-    ::-webkit-scrollbar-thumb:hover { background-color: #4a5a70; }
-    ::-webkit-scrollbar-corner { background: transparent; }
+        /* Dark Scrollbar for the page */
+        ::-webkit-scrollbar { width: 12px; height: 12px; }
+        ::-webkit-scrollbar-track { background: var(--bg-mid-blue); }
+        ::-webkit-scrollbar-thumb {
+            background-color: var(--bg-light-blue);
+            border-radius: 6px;
+            border: 2px solid var(--bg-mid-blue);
+        }
+        ::-webkit-scrollbar-thumb:hover { background-color: #4a5a70; }
+        ::-webkit-scrollbar-corner { background: transparent; }
 
-    .toolbar {
-        height: 32px; background: var(--bg-mid-blue); display: flex; align-items: center;
-        gap: 8px; padding: 0 8px; border-bottom: 1px solid #000; flex-shrink: 0;
-    }
-    button, input, select {
-        background: var(--bg-light-blue); color: var(--text-cream); border: 1px solid #000;
-        padding: 4px 8px; border-radius: 2px; font-family: inherit; font-size: 12px;
-    }
-    input:focus { outline: 1px solid var(--accent-cyan); }
-    #parserTemplate { width: 350px; }
-    #searchInput { flex-grow: 1; }
-    #searchInput.active-filter { color: var(--accent-cyan); }
+        .toolbar {
+            height: 32px; background: var(--bg-mid-blue); display: flex; align-items: center;
+            gap: 8px; padding: 0 8px; border-bottom: 1px solid #000; flex-shrink: 0;
+        }
+        button, input, select {
+            background: var(--bg-light-blue); color: var(--text-cream); border: 1px solid #000;
+            padding: 4px 8px; border-radius: 2px; font-family: inherit; font-size: 12px;
+        }
+        input:focus { outline: 1px solid var(--accent-cyan); }
+        #parserTemplate { width: 350px; }
+        #searchInput { flex-grow: 1; }
+        #searchInput.active-filter { color: var(--accent-cyan); }
 
-    .split-container {
-        display: flex; flex-direction: column; flex: 1; min-height: 0;
-    }
-    .view-pane {
-        flex: 1; position: relative; overflow: hidden; /* Monaco handles its own scrolling */
-    }
-    .splitter {
-        height: 4px; background: var(--bg-mid-blue); cursor: row-resize; flex-shrink: 0;
-    }
-</style>
+        .split-container {
+            display: flex; flex-direction: column; flex: 1; min-height: 0;
+        }
+        .view-pane {
+            position: relative; overflow: hidden; /* Monaco handles its own scrolling */
+        }
+        #mainView {
+            flex: 1 1 50%; /* Default to 50% height */
+        }
+        #filterView {
+            flex: 1 1 50%;
+        }
+
+        .splitter {
+            height: 6px; background: var(--bg-mid-blue); cursor: row-resize; flex-shrink: 0;
+            transition: background 0.2s;
+            z-index: 10;
+        }
+        .splitter:hover, .splitter.dragging {
+            background: var(--accent-cyan);
+        }
+    </style>
 </head>
 <body>
 
 <div class="toolbar">
     <input type="file" id="fileInput">
     <input id="parserTemplate" value="${timestamp} [${level}] [${thread}] ${logger} ${message}" title="Log Parser Template">
-    <input id="searchInput" placeholder="Filter with text or /regex/ and press Enter">
+    <input id="searchInput" placeholder="Filter (e.g., ERROR, /ERROR|WARN/) and press Enter">
 </div>
 
-<div class="split-container">
+<div class="split-container" id="splitContainer">
     <div id="mainView" class="view-pane"></div>
-    <div class="splitter"></div>
+    <div class="splitter" id="splitter"></div>
     <div id="filterView" class="view-pane"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs/loader.js"></script>
-
-<script>
-    let mainEditor;
-    let filterEditor;
-    let rawLogLines = [];
-    let filteredDataMap = []; 
-    let isSyncing = false; 
-    
-    // We use a counter to generate a unique language ID every time the template changes
-    let languageCounter = 0;
-    let currentLanguageId = 'hero-log-0';
-
-    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
-    require(['vs/editor/editor.main'], function() {
-        
-        // Define theme once
-        monaco.editor.defineTheme('islandDark', {
-            base: 'vs-dark',
-            inherit: true,
-            rules: [
-                { token: 'log-part-timestamp', foreground: '85c7f2' },
-                { token: 'log-part-thread', foreground: 'b39ddb' },
-                { token: 'log-part-logger', foreground: '80cbc4' },
-                { token: 'log-level-error', foreground: 'f45b69', fontStyle: 'bold' },
-                { token: 'log-level-warn', foreground: 'f7b801' },
-                { token: 'log-level-info', foreground: '61dafb' },
-                { token: 'log-level-debug', foreground: 'b0b1ad' },
-                { token: 'log-level-trace', foreground: '778da9' },
-            ],
-            colors: {
-                'editor.background': '#0d1b2a',
-                'editor.foreground': '#e0e1dd',
-                'editorCursor.foreground': '#61dafb',
-                'editor.lineHighlightBackground': '#1b263b',
-                'editor.selectionBackground': '#2a3a50',
-                'editorWidget.background': '#1b263b',
-                'editorWidget.border': '#000',
-                'scrollbar.shadow': '#00000000',
-                'scrollbarSlider.background': '#2a3a50',
-                'scrollbarSlider.hoverBackground': '#4a5a70',
-                'scrollbarSlider.activeBackground': '#4a5a70',
-            }
-        });
-        monaco.editor.setTheme('islandDark');<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs/loader.js"></script>
 
 <script>
     let mainEditor;
@@ -154,7 +122,8 @@
                 'editor.background': '#0d1b2a',
                 'editor.foreground': '#e0e1dd',
                 'editorCursor.foreground': '#61dafb',
-                'editor.lineHighlightBackground': '#1b263b',
+                'editor.lineHighlightBackground': '#61dafb22',
+                'editor.lineHighlightBorder': '#61dafb88',
                 'editor.selectionBackground': '#2a3a50',
                 'editorWidget.background': '#1b263b',
                 'editorWidget.border': '#000',
@@ -175,8 +144,9 @@
             scrollBeyondLastLine: false,
             wordWrap: 'on',
             minimap: { enabled: false },
-            renderLineHighlight: 'gutter',
+            renderLineHighlight: 'line',
             occurrencesHighlight: false,
+            automaticLayout: true // CRITICAL: Makes the editor automatically adjust when the splitter is dragged
         };
 
         // Initialize the first language state
@@ -199,7 +169,62 @@
         });
         
         setupEditorSync();
+        setupSplitterDrag();
     });
+
+    // --- Splitter Drag Logic ---
+    function setupSplitterDrag() {
+        const splitter = document.getElementById('splitter');
+        const mainView = document.getElementById('mainView');
+        const filterView = document.getElementById('filterView');
+        const splitContainer = document.getElementById('splitContainer');
+        
+        let isDragging = false;
+
+        splitter.addEventListener('mousedown', function(e) {
+            isDragging = true;
+            splitter.classList.add('dragging');
+            
+            // Prevent text selection and cursor flickering while dragging
+            document.body.style.cursor = 'row-resize';
+            document.body.style.userSelect = 'none';
+            
+            // Disable pointer events on editors so iframe/monaco doesn't eat the mouse events
+            mainView.style.pointerEvents = 'none';
+            filterView.style.pointerEvents = 'none';
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!isDragging) return;
+            
+            const containerRect = splitContainer.getBoundingClientRect();
+            // Calculate new height for top pane based on mouse position relative to container
+            let newMainHeight = e.clientY - containerRect.top;
+            
+            // Clamp heights so panels don't disappear completely (min 40px)
+            const minHeight = 40;
+            if (newMainHeight < minHeight) newMainHeight = minHeight;
+            if (newMainHeight > containerRect.height - minHeight) newMainHeight = containerRect.height - minHeight;
+
+            // Apply as a percentage to remain fluid on window resize
+            const percentage = (newMainHeight / containerRect.height) * 100;
+            mainView.style.flex = `0 0 ${percentage}%`;
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (isDragging) {
+                isDragging = false;
+                splitter.classList.remove('dragging');
+                
+                // Restore default styles
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                mainView.style.pointerEvents = '';
+                filterView.style.pointerEvents = '';
+            }
+        });
+    }
+    // ---------------------------
 
     function updateLanguageDefinition(template) {
         const regexMatches = [...template.matchAll(/\$\{([a-zA-Z0-9_]+)\}/g)];
