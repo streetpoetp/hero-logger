@@ -116,7 +116,7 @@
     /** 
      * USER CUSTOMIZATION: EDIT THIS TEMPLATE
      * This template is the single source of truth for the log format.
-     * The checkboxes and the parser are derived from it.
+     * It's a space-separated list of "groups". Each group must contain one variable.
      */
     const LOG_FORMAT_TEMPLATE = "${timestamp} [${level}] [${thread}] ${logger} ${message}";
 
@@ -124,7 +124,10 @@
     let rawLogLines = [], filteredDataMap = [];
     let isSyncing = false, languageCounter = 0;
     let currentLanguageId = 'hero-log-0';
+    
+    // These will be derived from the template
     let templateTokens;
+    let lineParserRegex;
 
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
     require(['vs/editor/editor.main'], function() {
@@ -144,7 +147,6 @@
                 { token: 'log-part-level', foreground: 'c0c0c0' },
                 { token: 'log-part-message', foreground: 'c0c0c0' },
                 { token: 'log-literal', foreground: '555555' },
-                { token: 'log-part-hidden', foreground: '1e1e1e' } // This makes the token invisible
             ],
             colors: {
                 'editor.background': '#1e1e1e',
@@ -183,95 +185,103 @@
     });
 
     function initializeFormattingControls() {
-        templateTokens = parseLogTemplate(LOG_FORMAT_TEMPLATE);
-        createToggleCheckboxes(templateTokens);
-        document.getElementById('logPartsContainer').addEventListener('change', (e) => {
-            if (e.target.type === 'checkbox') updateLanguageDefinition();
-        });
+        parseLogTemplate(LOG_FORMAT_TEMPLATE);
+        createToggleCheckboxes();
+        updateLineParser();
         updateLanguageDefinition();
+        
+        document.getElementById('logPartsContainer').addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') refreshViews();
+        });
     }
 
     function parseLogTemplate(template) {
-        const tokens = [];
-        const regex = /\$\{([a-zA-Z0-9_]+)\}/g;
-        let lastIndex = 0;
-        let match;
-        while ((match = regex.exec(template)) !== null) {
-            if (match.index > lastIndex) {
-                tokens.push({ type: 'literal', value: template.substring(lastIndex, match.index) });
-            }
-            tokens.push({ type: 'part', value: match[1] });
-            lastIndex = regex.lastIndex;
-        }
-        if (lastIndex < template.length) {
-            tokens.push({ type: 'literal', value: template.substring(lastIndex) });
-        }
-        return tokens;
+        const partRegex = /^(.*)\$\{([a-zA-Z0-9_]+)\}(.*)$/;
+        templateTokens = template.split(' ').map(chunk => {
+            const match = chunk.match(partRegex);
+            if (!match) throw new Error(`Invalid template chunk: "${chunk}"`);
+            return {
+                partName: match[2],
+                prefix: match[1],
+                suffix: match[3],
+            };
+        });
     }
 
-    function createToggleCheckboxes(tokens) {
+    function createToggleCheckboxes() {
         const container = document.getElementById('logPartsContainer');
         container.innerHTML = '';
-        tokens.filter(t => t.type === 'part').forEach(partToken => {
+        templateTokens.forEach(token => {
             const label = document.createElement('label');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
-            checkbox.dataset.part = partToken.value;
+            checkbox.dataset.part = token.partName;
             checkbox.checked = true;
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(` ${partToken.value}`));
+            label.appendChild(document.createTextNode(` ${token.partName}`));
             container.appendChild(label);
         });
     }
 
+    function updateLineParser() {
+        const regexString = '^' + templateTokens.map(token => {
+            const prefix = token.prefix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+            const suffix = token.suffix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+            const isLastToken = templateTokens.indexOf(token) === templateTokens.length - 1;
+            // The last part is greedy to capture the rest of the line.
+            const content = isLastToken ? '(.*)' : '(.*?)';
+            return `${prefix}${content}${suffix}`;
+        }).join(' ');
+        lineParserRegex = new RegExp(regexString);
+    }
+
+    function createLineReconstructor(partVisibility) {
+        return (line) => {
+            const match = line.match(lineParserRegex);
+            if (!match) return line;
+
+            const visibleParts = [];
+            for (let i = 0; i < templateTokens.length; i++) {
+                const token = templateTokens[i];
+                if (partVisibility[token.partName]) {
+                    const capturedValue = match[i + 1];
+                    visibleParts.push(token.prefix + capturedValue + token.suffix);
+                }
+            }
+            return visibleParts.join(' ');
+        };
+    }
+
     function updateLanguageDefinition() {
-        const partVisibility = {};
-        document.querySelectorAll('#logPartsContainer input[type="checkbox"]').forEach(cb => {
-            partVisibility[cb.dataset.part] = cb.checked;
-        });
-
-        let regexStr = '^';
         const actions = [];
+        let regexStr = '^';
         
-        for (let i = 0; i < templateTokens.length; i++) {
-            const token = templateTokens[i];
-            const isVisible = token.type === 'literal' || partVisibility[token.value];
+        for (const token of templateTokens) {
+            const prefix = token.prefix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
+            const suffix = token.suffix.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&');
             
-            if (token.type === 'part') {
-                const isLastPart = i === templateTokens.length - 1 || !templateTokens.slice(i + 1).some(t => t.type === 'part');
-                regexStr += isLastPart ? '(.*)' : '(.*?)';
-
-                if (partVisibility[token.value]) {
-                    if (token.value === 'level') {
-                        actions.push({
-                            cases: {
-                                '~^\\s*(error|fatal|exception|severe)\\s*$': 'log-level-error',
-                                '~^\\s*(warn|warning)\\s*$': 'log-level-warn',
-                                '~^\\s*info\\s*$': 'log-level-info',
-                                '~^\\s*debug\\s*$': 'log-level-debug',
-                                '~^\\s*trace\\s*$': 'log-level-trace',
-                                '@default': 'log-part-level',
-                            }
-                        });
-                    } else {
-                        actions.push(`log-part-${token.value}`);
+            // Each part is a capture group in the tokenizer regex
+            regexStr += `(${prefix}.*?${suffix})`;
+            
+            if (token.partName === 'level') {
+                actions.push({
+                    cases: {
+                        '~^.*\\[(error|fatal|exception|severe)\\].*$': 'log-level-error',
+                        '~^.*\\[(warn|warning)\\].*$': 'log-level-warn',
+                        '~^.*\\[(info)\\].*$': 'log-level-info',
+                        '~^.*\\[(debug)\\].*$': 'log-level-debug',
+                        '~^.*\\[(trace)\\].*$': 'log-level-trace',
+                        '@default': `log-part-${token.partName}`,
                     }
-                } else {
-                    actions.push('log-part-hidden');
-                }
-            } else { // Literal
-                const prevPart = i > 0 ? templateTokens[i-1] : null;
-                const nextPart = i < templateTokens.length - 1 ? templateTokens[i+1] : null;
-                const isPrevPartVisible = prevPart && prevPart.type === 'part' && partVisibility[prevPart.value];
-                const isNextPartVisible = nextPart && nextPart.type === 'part' && partVisibility[nextPart.value];
-
-                regexStr += `(${token.value.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&')})`;
-                
-                if (isPrevPartVisible && isNextPartVisible) {
-                    actions.push('log-literal');
-                } else {
-                    actions.push('log-part-hidden');
-                }
+                });
+            } else {
+                actions.push(`log-part-${token.partName}`);
+            }
+            
+            // Add the space separator if it's not the last token
+            if (templateTokens.indexOf(token) < templateTokens.length - 1) {
+                regexStr += '( )';
+                actions.push('log-literal');
             }
         }
 
@@ -283,13 +293,63 @@
             tokenizer: {
                 root: [
                     [new RegExp(regexStr), actions],
-                    [/.+/, 'log-part-message'] 
+                    [/.*/, 'log-part-message'] // Fallback for non-matching lines
                 ]
             }
         });
 
         if (mainEditor && mainEditor.getModel()) monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
         if (filterEditor && filterEditor.getModel()) monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
+    }
+
+    function refreshViews() {
+        if (!rawLogLines.length) return;
+
+        const partVisibility = {};
+        document.querySelectorAll('#logPartsContainer input[type="checkbox"]').forEach(cb => {
+            partVisibility[cb.dataset.part] = cb.checked;
+        });
+
+        const lineReconstructor = createLineReconstructor(partVisibility);
+
+        // Update main editor
+        const newMainContent = rawLogLines.map(lineReconstructor).join('\n');
+        if (mainEditor.getModel().getValue() !== newMainContent) {
+            mainEditor.getModel().setValue(newMainContent);
+        }
+
+        // Update filter editor
+        const query = document.getElementById('searchInput').value.trim();
+        document.getElementById('searchInput').classList.toggle('active-filter', !!query);
+
+        filteredDataMap = [];
+        let newFilteredContent = "";
+
+        if (query) {
+            let regex;
+            const regexMatch = query.match(/^\/(.*)\/([i]?)$/);
+            if (regexMatch) {
+                try { regex = new RegExp(regexMatch[1], regexMatch[2] || ''); } catch (e) { regex = null; }
+            } else {
+                regex = new RegExp(query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'i');
+            }
+
+            if (regex) {
+                const filteredLines = [];
+                for (let i = 0; i < rawLogLines.length; i++) {
+                    if (regex.test(rawLogLines[i])) {
+                        filteredLines.push(rawLogLines[i]);
+                        filteredDataMap.push({ text: rawLogLines[i], originalLineNumber: i + 1 });
+                    }
+                }
+                newFilteredContent = filteredLines.map(lineReconstructor).join('\n');
+            }
+        }
+        
+        const filterModel = filterEditor.getModel();
+        if (filterModel.getValue() !== newFilteredContent) {
+            filterModel.setValue(newFilteredContent || "Filtered results will appear here.");
+        }
     }
 
     function setupSplitterDrag() {
@@ -330,45 +390,16 @@
         const reader = new FileReader();
         reader.onload = (ev) => {
             rawLogLines = ev.target.result.split(/\r?\n/);
-            mainEditor.setModel(monaco.editor.createModel(ev.target.result, currentLanguageId));
-            applyFilter();
+            // Set a fresh model to clear old state and ensure correct language is applied
+            mainEditor.setModel(monaco.editor.createModel("", currentLanguageId));
+            filterEditor.setModel(monaco.editor.createModel("", currentLanguageId));
+            refreshViews();
         };
         reader.readAsText(file);
     }
 
     function handleSearch(e) {
-        if (e.key === 'Enter') applyFilter();
-    }
-
-    function applyFilter() {
-        const query = document.getElementById('searchInput').value.trim();
-        document.getElementById('searchInput').classList.toggle('active-filter', !!query);
-
-        filteredDataMap = [];
-        if (!query) {
-            filterEditor.setModel(monaco.editor.createModel("", currentLanguageId));
-            return;
-        }
-
-        let regex;
-        const regexMatch = query.match(/^\/(.*)\/([i]?)$/);
-        if (regexMatch) {
-            try { regex = new RegExp(regexMatch[1], regexMatch[2] || ''); } catch (e) { regex = null; }
-        } else {
-            regex = new RegExp(query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'i');
-        }
-
-        if (!regex) return;
-
-        const filteredLines = [];
-        for (let i = 0; i < rawLogLines.length; i++) {
-            const line = rawLogLines[i];
-            if (regex.test(line)) {
-                filteredLines.push(line);
-                filteredDataMap.push({ text: line, originalLineNumber: i + 1 });
-            }
-        }
-        filterEditor.setModel(monaco.editor.createModel(filteredLines.join('\n'), currentLanguageId));
+        if (e.key === 'Enter') refreshViews();
     }
 
     function setupEditorSync() {
@@ -381,7 +412,7 @@
                 const targetLine = filterIdx + 1;
                 filterEditor.revealLineInCenter(targetLine, monaco.editor.ScrollType.Immediate);
                 filterEditor.setPosition({ lineNumber: targetLine, column: 1 });
-                isSyncing = false;
+                setTimeout(() => isSyncing = false, 50);
             }
         });
 
@@ -392,7 +423,7 @@
                 isSyncing = true;
                 mainEditor.revealLineInCenter(mapping.originalLineNumber, monaco.editor.ScrollType.Immediate);
                 mainEditor.setPosition({ lineNumber: mapping.originalLineNumber, column: 1 });
-                isSyncing = false;
+                setTimeout(() => isSyncing = false, 50);
             }
         });
     }
