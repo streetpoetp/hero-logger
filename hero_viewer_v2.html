@@ -42,11 +42,15 @@
         #mainView { flex: 1 1 50%; }
         #filterView { flex: 1 1 50%; background: var(--bg-charcoal-secondary); }
 
-        /* Toolbar inside Filter View */
+        /* Toolbar */
         .toolbar {
             height: 36px; background: var(--bg-charcoal-secondary); display: flex; align-items: center;
             gap: 12px; padding: 0 12px; border-bottom: 1px solid #000; flex-shrink: 0;
             z-index: 20;
+        }
+        
+        #mainView .toolbar {
+            background: var(--bg-charcoal);
         }
 
         .editor-container { flex: 1; width: 100%; min-height: 0; }
@@ -57,6 +61,14 @@
         }
 
         #fileInput { width: 220px; }
+
+        #logPartsContainer {
+            display: flex; align-items: center; gap: 10px;
+        }
+        #logPartsContainer label {
+            display: flex; align-items: center; gap: 4px; cursor: pointer;
+            text-transform: capitalize;
+        }
 
         /* Stretches the search input to take the rest of the space */
         #searchInput { flex: 1; min-width: 200px; }
@@ -79,6 +91,10 @@
 <div class="split-container" id="splitContainer">
     <!-- Top Pane: Full Log -->
     <div id="mainView" class="view-pane">
+        <div class="toolbar">
+            <input type="file" id="fileInput">
+            <div id="logPartsContainer"></div>
+        </div>
         <div id="mainEditorContainer" class="editor-container"></div>
     </div>
 
@@ -88,7 +104,6 @@
     <!-- Bottom Pane: Filter & Controls -->
     <div id="filterView" class="view-pane">
         <div class="toolbar">
-            <input type="file" id="fileInput">
             <input id="searchInput" placeholder="Search / Filter (Regex supported: /ERROR|WARN/i) - Press Enter to apply">
         </div>
         <div id="filterEditorContainer" class="editor-container"></div>
@@ -100,18 +115,16 @@
 <script>
     /** 
      * USER CUSTOMIZATION: EDIT THIS TEMPLATE
-     * Use ${name} syntax to define parts of your log line.
-     * Use ${level} specifically to enable color-coding of ERROR/WARN/INFO.
+     * This template is the single source of truth for the log format.
+     * The checkboxes and the parser are derived from it.
      */
     const LOG_FORMAT_TEMPLATE = "${timestamp} [${level}] [${thread}] ${logger} ${message}";
 
-    let mainEditor;
-    let filterEditor;
-    let rawLogLines = [];
-    let filteredDataMap = []; 
-    let isSyncing = false; 
-    let languageCounter = 0;
+    let mainEditor, filterEditor;
+    let rawLogLines = [], filteredDataMap = [];
+    let isSyncing = false, languageCounter = 0;
     let currentLanguageId = 'hero-log-0';
+    let templateTokens;
 
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
     require(['vs/editor/editor.main'], function() {
@@ -130,19 +143,17 @@
                 { token: 'log-level-trace', foreground: 'a070a0' },
                 { token: 'log-part-level', foreground: 'c0c0c0' },
                 { token: 'log-part-message', foreground: 'c0c0c0' },
-                { token: 'log-literal', foreground: '555555' }
+                { token: 'log-literal', foreground: '555555' },
+                { token: 'log-part-hidden', foreground: '1e1e1e' } // This makes the token invisible
             ],
             colors: {
                 'editor.background': '#1e1e1e',
                 'editor.foreground': '#dcdcdc',
                 'editorCursor.foreground': '#aeafad',
-                
-                // Enhanced Highlighting
                 'editor.lineHighlightBackground': '#2d3032',
                 'editor.lineHighlightBorder': '#3a3d41',
                 'editor.selectionBackground': '#3a3d41',
                 'editor.selectionHighlightBackground': '#264f78',
-                
                 'editorWidget.background': '#252526',
                 'editorWidget.border': '#569cd6',
                 'scrollbarSlider.background': '#3c3c3e',
@@ -152,30 +163,17 @@
         monaco.editor.setTheme('riderIslandsDark');
 
         const commonEditorOptions = {
-            readOnly: true,
-            domReadOnly: true,
-            fontFamily: '"Consolas", "Courier New", monospace',
-            fontSize: 14,
-            lineNumbers: 'on',
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            minimap: { enabled: false },
-            renderLineHighlight: 'all',
-            renderLineHighlightOnlyWhenFocus: false,
-            automaticLayout: true 
+            readOnly: true, domReadOnly: true,
+            fontFamily: '"Consolas", "Courier New", monospace', fontSize: 14,
+            lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on',
+            minimap: { enabled: false }, renderLineHighlight: 'all',
+            renderLineHighlightOnlyWhenFocus: false, automaticLayout: true 
         };
 
-        updateLanguageDefinition(LOG_FORMAT_TEMPLATE);
+        initializeFormattingControls();
 
-        mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), {
-            ...commonEditorOptions,
-            model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.", currentLanguageId),
-        });
-
-        filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), {
-            ...commonEditorOptions,
-            model: monaco.editor.createModel("Filtered results will appear here.", currentLanguageId),
-        });
+        mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.", currentLanguageId) });
+        filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Filtered results will appear here.", currentLanguageId) });
 
         document.getElementById('fileInput').addEventListener('change', handleFile);
         document.getElementById('searchInput').addEventListener('keydown', handleSearch);
@@ -183,6 +181,116 @@
         setupEditorSync();
         setupSplitterDrag();
     });
+
+    function initializeFormattingControls() {
+        templateTokens = parseLogTemplate(LOG_FORMAT_TEMPLATE);
+        createToggleCheckboxes(templateTokens);
+        document.getElementById('logPartsContainer').addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') updateLanguageDefinition();
+        });
+        updateLanguageDefinition();
+    }
+
+    function parseLogTemplate(template) {
+        const tokens = [];
+        const regex = /\$\{([a-zA-Z0-9_]+)\}/g;
+        let lastIndex = 0;
+        let match;
+        while ((match = regex.exec(template)) !== null) {
+            if (match.index > lastIndex) {
+                tokens.push({ type: 'literal', value: template.substring(lastIndex, match.index) });
+            }
+            tokens.push({ type: 'part', value: match[1] });
+            lastIndex = regex.lastIndex;
+        }
+        if (lastIndex < template.length) {
+            tokens.push({ type: 'literal', value: template.substring(lastIndex) });
+        }
+        return tokens;
+    }
+
+    function createToggleCheckboxes(tokens) {
+        const container = document.getElementById('logPartsContainer');
+        container.innerHTML = '';
+        tokens.filter(t => t.type === 'part').forEach(partToken => {
+            const label = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.dataset.part = partToken.value;
+            checkbox.checked = true;
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(` ${partToken.value}`));
+            container.appendChild(label);
+        });
+    }
+
+    function updateLanguageDefinition() {
+        const partVisibility = {};
+        document.querySelectorAll('#logPartsContainer input[type="checkbox"]').forEach(cb => {
+            partVisibility[cb.dataset.part] = cb.checked;
+        });
+
+        let regexStr = '^';
+        const actions = [];
+        
+        for (let i = 0; i < templateTokens.length; i++) {
+            const token = templateTokens[i];
+            const isVisible = token.type === 'literal' || partVisibility[token.value];
+            
+            if (token.type === 'part') {
+                const isLastPart = i === templateTokens.length - 1 || !templateTokens.slice(i + 1).some(t => t.type === 'part');
+                regexStr += isLastPart ? '(.*)' : '(.*?)';
+
+                if (partVisibility[token.value]) {
+                    if (token.value === 'level') {
+                        actions.push({
+                            cases: {
+                                '~^\\s*(error|fatal|exception|severe)\\s*$': 'log-level-error',
+                                '~^\\s*(warn|warning)\\s*$': 'log-level-warn',
+                                '~^\\s*info\\s*$': 'log-level-info',
+                                '~^\\s*debug\\s*$': 'log-level-debug',
+                                '~^\\s*trace\\s*$': 'log-level-trace',
+                                '@default': 'log-part-level',
+                            }
+                        });
+                    } else {
+                        actions.push(`log-part-${token.value}`);
+                    }
+                } else {
+                    actions.push('log-part-hidden');
+                }
+            } else { // Literal
+                const prevPart = i > 0 ? templateTokens[i-1] : null;
+                const nextPart = i < templateTokens.length - 1 ? templateTokens[i+1] : null;
+                const isPrevPartVisible = prevPart && prevPart.type === 'part' && partVisibility[prevPart.value];
+                const isNextPartVisible = nextPart && nextPart.type === 'part' && partVisibility[nextPart.value];
+
+                regexStr += `(${token.value.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&')})`;
+                
+                if (isPrevPartVisible && isNextPartVisible) {
+                    actions.push('log-literal');
+                } else {
+                    actions.push('log-part-hidden');
+                }
+            }
+        }
+
+        languageCounter++;
+        currentLanguageId = `hero-log-${languageCounter}`;
+        monaco.languages.register({ id: currentLanguageId });
+        monaco.languages.setMonarchTokensProvider(currentLanguageId, {
+            ignoreCase: true,
+            tokenizer: {
+                root: [
+                    [new RegExp(regexStr), actions],
+                    [/.+/, 'log-part-message'] 
+                ]
+            }
+        });
+
+        if (mainEditor && mainEditor.getModel()) monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
+        if (filterEditor && filterEditor.getModel()) monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
+    }
 
     function setupSplitterDrag() {
         const splitter = document.getElementById('splitter');
@@ -214,66 +322,6 @@
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
         });
-    }
-
-    function updateLanguageDefinition(template) {
-        const regexMatches = [...template.matchAll(/\$\{([a-zA-Z0-9_]+)\}/g)];
-        if (regexMatches.length === 0) return;
-
-        let regexStr = '^';
-        let actions = [];
-        let lastIndex = 0;
-        
-        regexMatches.forEach((match, idx) => {
-            const varName = match[1];
-            const literalBefore = template.substring(lastIndex, match.index);
-            if (literalBefore.length > 0) {
-                const escapedLiteral = literalBefore.replace(/\s+/g, ' ').replace(/[.*+?^$()[\]{}|\\]/g, '\\$&').replace(/ /g, '\\s+');
-                regexStr += `(${escapedLiteral})`;
-                actions.push('log-literal');
-            }
-            const isLast = idx === regexMatches.length - 1;
-            regexStr += isLast ? '(.*)' : '(.*?)';
-            
-            if (varName === 'level') {
-                actions.push({
-                    cases: {
-                        '~^\\s*(error|fatal|exception|severe)\\s*$': 'log-level-error',
-                        '~^\\s*(warn|warning)\\s*$': 'log-level-warn',
-                        '~^\\s*info\\s*$': 'log-level-info',
-                        '~^\\s*debug\\s*$': 'log-level-debug',
-                        '~^\\s*trace\\s*$': 'log-level-trace',
-                        '@default': 'log-part-level',
-                    }
-                });
-            } else {
-                actions.push(`log-part-${varName}`);
-            }
-            lastIndex = match.index + match[0].length;
-        });
-
-        const literalAfter = template.substring(lastIndex);
-        if (literalAfter.length > 0) {
-            const escapedLiteral = literalAfter.replace(/\s+/g, ' ').replace(/[.*+?^$()[\]{}|\\]/g, '\\$&').replace(/ /g, '\\s+');
-            regexStr += `(${escapedLiteral})?`;
-            actions.push('log-literal');
-        }
-
-        languageCounter++;
-        currentLanguageId = `hero-log-${languageCounter}`;
-        monaco.languages.register({ id: currentLanguageId });
-        monaco.languages.setMonarchTokensProvider(currentLanguageId, {
-            ignoreCase: true,
-            tokenizer: {
-                root: [
-                    [new RegExp(regexStr), actions],
-                    [/.+/, 'log-part-message'] 
-                ]
-            }
-        });
-
-        if (mainEditor && mainEditor.getModel()) monaco.editor.setModelLanguage(mainEditor.getModel(), currentLanguageId);
-        if (filterEditor && filterEditor.getModel()) monaco.editor.setModelLanguage(filterEditor.getModel(), currentLanguageId);
     }
 
     function handleFile(e) {
@@ -324,7 +372,6 @@
     }
 
     function setupEditorSync() {
-        // Sync Full View -> Filter View
         mainEditor.onDidChangeCursorPosition(e => {
             if (isSyncing || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
             const originalLine = e.position.lineNumber;
@@ -338,7 +385,6 @@
             }
         });
 
-        // Sync Filter View -> Full View
         filterEditor.onDidChangeCursorPosition(e => {
             if (isSyncing || e.reason !== monaco.editor.CursorChangeReason.Explicit) return;
             const mapping = filteredDataMap[e.position.lineNumber - 1];
