@@ -211,17 +211,40 @@
         });
     }
 
+    function getShortName(name) {
+        // Names 4 chars or less are fine as they are.
+        if (name.length <= 4) {
+            return name;
+        }
+        // For longer names, create an abbreviation by removing vowels (except the first letter).
+        const shortName = name[0] + name.substring(1).replace(/[aeiou]/g, '');
+
+        // If the result is too long, truncate to 4 chars.
+        if (shortName.length > 4) {
+            return shortName.substring(0, 4);
+        }
+        // If the result is too short (e.g. "audio" -> "ad"), fallback to simple 3-char truncation.
+        if (shortName.length < 3 && name.length > 2) {
+            return name.substring(0, 3);
+        }
+        return shortName;
+    }
+
     function createToggleCheckboxes() {
         const container = document.getElementById('logPartsContainer');
         container.innerHTML = '';
         templateTokens.forEach(token => {
             const label = document.createElement('label');
+            label.title = token.partName; // Add full name as a tooltip
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.dataset.part = token.partName;
             checkbox.checked = true;
+            
+            const shortName = getShortName(token.partName);
+            
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(` ${token.partName}`));
+            label.appendChild(document.createTextNode(` ${shortName}`));
             container.appendChild(label);
         });
     }
