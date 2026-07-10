@@ -68,6 +68,11 @@
         #logPartsContainer label, #filterLogPartsContainer label {
             display: flex; align-items: center; gap: 4px; cursor: pointer;
             text-transform: capitalize;
+            font-weight: bold;
+        }
+        
+        #logPartsContainer {
+            margin-left: auto;
         }
 
         /* Stretches the search input to take the rest of the space */
@@ -121,6 +126,21 @@
      */
     const LOG_FORMAT_TEMPLATE = "${timestamp} [${level}] [${thread}] ${logger} ${message}";
 
+    const THEME_RULES = [
+        { token: 'log-part-timestamp', foreground: '808080' },
+        { token: 'log-part-thread', foreground: '80b0c0' },
+        { token: 'log-part-logger', foreground: '40a080' },
+        { token: 'log-level-error', foreground: 'd06050', fontStyle: 'bold' },
+        { token: 'log-level-warn', foreground: 'b08060', fontStyle: 'bold' },
+        { token: 'log-level-info', foreground: '4080b0' },
+        { token: 'log-level-debug', foreground: '90b080' },
+        { token: 'log-level-trace', foreground: 'a070a0' },
+        { token: 'log-part-level', foreground: 'c0c0c0' },
+        { token: 'log-part-message', foreground: 'c0c0c0' },
+        { token: 'log-literal', foreground: '555555' },
+    ];
+    const TOKEN_COLOR_MAP = new Map(THEME_RULES.map(rule => [rule.token, rule.foreground]));
+
     let mainEditor, filterEditor;
     let rawLogLines = [], filteredDataMap = [];
     let isSyncing = false, languageCounter = 0;
@@ -135,19 +155,7 @@
         monaco.editor.defineTheme('riderIslandsDark', {
             base: 'vs-dark',
             inherit: true,
-            rules: [
-                { token: 'log-part-timestamp', foreground: '808080' },
-                { token: 'log-part-thread', foreground: '80b0c0' },
-                { token: 'log-part-logger', foreground: '40a080' },
-                { token: 'log-level-error', foreground: 'd06050', fontStyle: 'bold' },
-                { token: 'log-level-warn', foreground: 'b08060', fontStyle: 'bold' },
-                { token: 'log-level-info', foreground: '4080b0' },
-                { token: 'log-level-debug', foreground: '90b080' },
-                { token: 'log-level-trace', foreground: 'a070a0' },
-                { token: 'log-part-level', foreground: 'c0c0c0' },
-                { token: 'log-part-message', foreground: 'c0c0c0' },
-                { token: 'log-literal', foreground: '555555' },
-            ],
+            rules: THEME_RULES,
             colors: {
                 'editor.background': '#1e1e1e',
                 'editor.foreground': '#dcdcdc',
@@ -199,6 +207,7 @@
         templateTokens.forEach(token => {
             const label = document.createElement('label');
             label.title = token.partName;
+            
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.dataset.part = token.partName;
@@ -206,6 +215,16 @@
             
             const shortName = getShortName(token.partName);
             
+            // Sync label color with theme
+            let tokenName = `log-part-${token.partName}`;
+            if (token.partName === 'level') {
+                tokenName = 'log-level-debug'; // Use a representative color for the level label
+            }
+            const color = TOKEN_COLOR_MAP.get(tokenName);
+            if (color) {
+                label.style.color = `#${color}`;
+            }
+
             label.appendChild(checkbox);
             label.appendChild(document.createTextNode(` ${shortName}`));
             container.appendChild(label);
