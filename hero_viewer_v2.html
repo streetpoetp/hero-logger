@@ -59,13 +59,16 @@
             background: var(--bg-control); color: var(--text-off-white); border: 1px solid #000;
             padding: 5px 10px; border-radius: 2px; font-family: inherit; font-size: 14px;
         }
-
-        #fileInput { width: 220px; }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
 
         #logPartsContainer, #filterLogPartsContainer {
             display: flex; align-items: center; gap: 10px;
         }
-        #logPartsContainer label, #filterLogPartsContainer label {
+        #logPartsContainer label, #filterLogPartsContainer label, #autoReloadLabel {
             --checkbox-color: var(--text-off-white); /* Fallback color */
             display: flex; align-items: center; gap: 4px; cursor: pointer;
             text-transform: capitalize;
@@ -77,8 +80,13 @@
             margin-left: auto;
         }
 
+        #autoReloadLabel {
+            --checkbox-color: var(--accent-gray);
+            color: var(--accent-gray);
+        }
+
         /* Custom Checkbox Styling */
-        #logPartsContainer label input, #filterLogPartsContainer label input {
+        label input[type="checkbox"] {
             position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0;
         }
         .custom-checkbox {
@@ -130,7 +138,13 @@
     <!-- Top Pane: Full Log -->
     <div id="mainView" class="view-pane">
         <div class="toolbar">
-            <input type="file" id="fileInput">
+            <button id="openFileButton">Open File</button>
+            <button id="reloadButton" disabled>Reload</button>
+            <label id="autoReloadLabel">
+                <input type="checkbox" id="autoReloadCheckbox">
+                <span class="custom-checkbox"></span>
+                 Auto-Reload
+            </label>
             <div id="logPartsContainer"></div>
         </div>
         <div id="mainEditorContainer" class="editor-container"></div>
@@ -178,7 +192,9 @@
     let rawLogLines = [], filteredDataMap = [];
     let isSyncing = false, languageCounter = 0;
     
-    // These will be derived from the template
+    let currentFileHandle = null;
+    let autoReloadInterval = null;
+
     let templateTokens;
     let lineParserRegex;
 
@@ -218,7 +234,9 @@
         mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.") });
         filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Filtered results will appear here.") });
 
-        document.getElementById('fileInput').addEventListener('change', handleFile);
+        document.getElementById('openFileButton').addEventListener('click', openAndLoadFile);
+        document.getElementById('reloadButton').addEventListener('click', reloadFile);
+        document.getElementById('autoReloadCheckbox').addEventListener('change', toggleAutoReload);
         document.getElementById('searchInput').addEventListener('keydown', handleSearch);
         
         setupEditorSync();
@@ -251,10 +269,9 @@
             
             const shortName = getShortName(token.partName);
             
-            // Sync label and checkbox color with theme
             let tokenName = `log-part-${token.partName}`;
             if (token.partName === 'level') {
-                tokenName = 'log-level-debug'; // Use a representative color for the level label
+                tokenName = 'log-level-debug';
             }
             const color = TOKEN_COLOR_MAP.get(tokenName);
             if (color) {
@@ -389,13 +406,11 @@
     function refreshViews() {
         if (!rawLogLines.length) return;
 
-        // Handle Main View
         const mainPartVisibility = getPartVisibility('logPartsContainer');
         const mainLineReconstructor = createLineReconstructor(mainPartVisibility);
         const newMainContent = rawLogLines.map(mainLineReconstructor).join('\n');
         updateLanguageAndContent(mainEditor, mainPartVisibility, newMainContent);
 
-        // Handle Filter View
         const filterPartVisibility = getPartVisibility('filterLogPartsContainer');
         const filterLineReconstructor = createLineReconstructor(filterPartVisibility);
         
@@ -429,6 +444,68 @@
         updateLanguageAndContent(filterEditor, filterPartVisibility, newFilteredContent || (query ? "No results found." : "Filtered results will appear here."));
     }
 
+    async function openAndLoadFile() {
+        if (!window.showOpenFilePicker) {
+            alert("Your browser doesn't support the File System Access API. Please use a modern browser like Chrome or Edge.");
+            return;
+        }
+        try {
+            [currentFileHandle] = await window.showOpenFilePicker();
+            document.getElementById('reloadButton').disabled = false;
+            await loadFileFromHandle();
+        } catch (err) {
+            console.error("File selection was cancelled or failed.", err);
+        }
+    }
+
+    async function loadFileFromHandle() {
+        if (!currentFileHandle) return;
+        const file = await currentFileHandle.getFile();
+        const text = await file.text();
+        rawLogLines = text.split(/\r?\n/);
+        refreshViews();
+    }
+
+    async function reloadFile() {
+        const button = document.getElementById('reloadButton');
+        if (!currentFileHandle || button.disabled) return;
+
+        button.disabled = true;
+        const originalText = button.textContent;
+        button.textContent = 'Reloading...';
+
+        try {
+            await loadFileFromHandle();
+        } catch (err) {
+            console.error("Error reloading file:", err);
+            alert("Failed to reload the file. It may have been moved or deleted.");
+            currentFileHandle = null; // Invalidate the handle
+        } finally {
+            button.textContent = originalText;
+            // The button remains disabled if the handle was invalidated
+            if (currentFileHandle) {
+                button.disabled = false;
+            }
+        }
+    }
+
+    function toggleAutoReload(e) {
+        if (e.target.checked) {
+            if (!currentFileHandle) {
+                alert("Please open a file first.");
+                e.target.checked = false;
+                return;
+            }
+            if (autoReloadInterval) clearInterval(autoReloadInterval);
+            autoReloadInterval = setInterval(reloadFile, 2000);
+        } else {
+            if (autoReloadInterval) {
+                clearInterval(autoReloadInterval);
+                autoReloadInterval = null;
+            }
+        }
+    }
+
     function setupSplitterDrag() {
         const splitter = document.getElementById('splitter');
         const mainView = document.getElementById('mainView');
@@ -459,19 +536,6 @@
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
         });
-    }
-
-    function handleFile(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            rawLogLines = ev.target.result.split(/\r?\n/);
-            mainEditor.setModel(monaco.editor.createModel(""));
-            filterEditor.setModel(monaco.editor.createModel(""));
-            refreshViews();
-        };
-        reader.readAsText(file);
     }
 
     function handleSearch(e) {
