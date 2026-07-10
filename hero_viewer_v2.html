@@ -66,14 +66,47 @@
             display: flex; align-items: center; gap: 10px;
         }
         #logPartsContainer label, #filterLogPartsContainer label {
+            --checkbox-color: var(--text-off-white); /* Fallback color */
             display: flex; align-items: center; gap: 4px; cursor: pointer;
             text-transform: capitalize;
-            font-weight: bold;
+            position: relative;
+            user-select: none;
         }
         
         #logPartsContainer {
             margin-left: auto;
         }
+
+        /* Custom Checkbox Styling */
+        #logPartsContainer label input, #filterLogPartsContainer label input {
+            position: absolute; opacity: 0; cursor: pointer; height: 0; width: 0;
+        }
+        .custom-checkbox {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--checkbox-color);
+            border-radius: 3px;
+            transition: background-color 0.15s;
+            position: relative;
+        }
+        .custom-checkbox::after {
+            content: "✔";
+            position: absolute;
+            top: -3px;
+            left: 1px;
+            font-size: 14px;
+            color: var(--bg-charcoal);
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        input:checked ~ .custom-checkbox {
+            background-color: var(--checkbox-color);
+        }
+        input:checked ~ .custom-checkbox::after {
+            opacity: 1;
+        }
+
 
         /* Stretches the search input to take the rest of the space */
         #searchInput { flex: 1; min-width: 100px; }
@@ -212,20 +245,25 @@
             checkbox.type = 'checkbox';
             checkbox.dataset.part = token.partName;
             checkbox.checked = true;
+
+            const customCheckbox = document.createElement('span');
+            customCheckbox.className = 'custom-checkbox';
             
             const shortName = getShortName(token.partName);
             
-            // Sync label color with theme
+            // Sync label and checkbox color with theme
             let tokenName = `log-part-${token.partName}`;
             if (token.partName === 'level') {
                 tokenName = 'log-level-debug'; // Use a representative color for the level label
             }
             const color = TOKEN_COLOR_MAP.get(tokenName);
             if (color) {
+                label.style.setProperty('--checkbox-color', `#${color}`);
                 label.style.color = `#${color}`;
             }
 
             label.appendChild(checkbox);
+            label.appendChild(customCheckbox);
             label.appendChild(document.createTextNode(` ${shortName}`));
             container.appendChild(label);
         });
