@@ -164,7 +164,7 @@
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs/loader.js"></script>
+<script src="libs/monaco-editor/min/vs/loader.js"></script>
 
 <script>
     /** 
@@ -201,7 +201,7 @@
     let templateTokens;
     let lineParserRegex;
 
-    require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.34.1/min/vs' }});
+    require.config({ paths: { 'vs': 'libs/monaco-editor/min/vs' }});
     require(['vs/editor/editor.main'], function() {
         
         monaco.editor.defineTheme('riderIslandsDark', {
