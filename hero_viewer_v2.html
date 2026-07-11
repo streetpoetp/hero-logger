@@ -156,7 +156,8 @@
     <!-- Bottom Pane: Filter & Controls -->
     <div id="filterView" class="view-pane">
         <div class="toolbar">
-            <input id="searchInput" placeholder="Search / Filter (Regex supported: /ERROR|WARN/i) - Press Enter to apply">
+            <input id="searchInput" list="searchHistory" placeholder="Search / Filter (Regex supported: /ERROR|WARN/i) - Press Enter to apply">
+            <datalist id="searchHistory"></datalist>
             <div id="filterLogPartsContainer"></div>
         </div>
         <div id="filterEditorContainer" class="editor-container"></div>
@@ -172,6 +173,8 @@
      * It's a space-separated list of "groups". Each group must contain one variable.
      */
     const LOG_FORMAT_TEMPLATE = "${timestamp} [${level}] [${thread}] ${logger} ${message}";
+    const SEARCH_HISTORY_KEY = 'hero-log-viewer-search-history';
+    const MAX_HISTORY_ENTRIES = 20;
 
     const THEME_RULES = [
         { token: 'log-part-timestamp', foreground: '808080' },
@@ -230,6 +233,7 @@
         };
 
         initializeFormattingControls();
+        loadSearchHistory();
 
         mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.") });
         filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Filtered results will appear here.") });
@@ -482,7 +486,6 @@
             currentFileHandle = null; // Invalidate the handle
         } finally {
             button.textContent = originalText;
-            // The button remains disabled if the handle was invalidated
             if (currentFileHandle) {
                 button.disabled = false;
             }
@@ -504,6 +507,41 @@
                 autoReloadInterval = null;
             }
         }
+    }
+
+    function handleSearch(e) {
+        if (e.key === 'Enter') {
+            const query = e.target.value.trim();
+            if (query) {
+                saveSearchHistory(query);
+            }
+            refreshViews();
+        }
+    }
+
+    function loadSearchHistory() {
+        const history = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || '[]');
+        const datalist = document.getElementById('searchHistory');
+        datalist.innerHTML = '';
+        history.forEach(query => {
+            const option = document.createElement('option');
+            option.value = query;
+            datalist.appendChild(option);
+        });
+    }
+
+    function saveSearchHistory(query) {
+        let history = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || '[]');
+        // Remove existing entry to move it to the top
+        history = history.filter(item => item !== query);
+        // Add to the top
+        history.unshift(query);
+        // Trim to max entries
+        if (history.length > MAX_HISTORY_ENTRIES) {
+            history.length = MAX_HISTORY_ENTRIES;
+        }
+        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+        loadSearchHistory(); // Refresh the datalist
     }
 
     function setupSplitterDrag() {
@@ -536,10 +574,6 @@
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
         });
-    }
-
-    function handleSearch(e) {
-        if (e.key === 'Enter') refreshViews();
     }
 
     function setupEditorSync() {
