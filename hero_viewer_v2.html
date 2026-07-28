@@ -130,6 +130,16 @@
             content: "•••"; color: var(--accent-gray); letter-spacing: 2px; font-size: 10px;
         }
         .splitter:hover, .splitter.dragging { background: var(--accent-sky-blue); }
+
+        #filePathDisplay {
+            margin-left: 10px;
+            font-size: 14px;
+            color: var(--accent-gray); /* Changed from --text-off-white to --accent-gray */
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 300px; /* Adjust as needed */
+        }
     </style>
 </head>
 <body>
@@ -145,6 +155,7 @@
                 <span class="custom-checkbox"></span>
                  Auto-Reload
             </label>
+            <span id="filePathDisplay">No file selected</span>
             <div id="logPartsContainer"></div>
         </div>
         <div id="mainEditorContainer" class="editor-container"></div>
@@ -456,6 +467,7 @@
         try {
             [currentFileHandle] = await window.showOpenFilePicker();
             document.getElementById('reloadButton').disabled = false;
+            document.getElementById('filePathDisplay').textContent = currentFileHandle.name;
             await loadFileFromHandle();
         } catch (err) {
             console.error("File selection was cancelled or failed.", err);
@@ -467,6 +479,7 @@
         const file = await currentFileHandle.getFile();
         const text = await file.text();
         rawLogLines = text.split(/\r?\n/);
+        document.getElementById('filePathDisplay').textContent = currentFileHandle.name; // Update display on reload
         refreshViews();
     }
 
@@ -484,6 +497,7 @@
             console.error("Error reloading file:", err);
             alert("Failed to reload the file. It may have been moved or deleted.");
             currentFileHandle = null; // Invalidate the handle
+            document.getElementById('filePathDisplay').textContent = 'No file selected'; // Clear display
         } finally {
             button.textContent = originalText;
             if (currentFileHandle) {
