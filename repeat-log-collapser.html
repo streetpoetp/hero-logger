@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Repeat Log Collapser</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    background: #111; color: #ddd;
+    font-family: Consolas, "Cascadia Code", monospace;
+  }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  .toolbar { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  button {
+    background:#222; color:#ddd; border:1px solid #444;
+    padding:7px 12px; cursor:pointer; border-radius:4px;
+  }
+  button:hover { background:#333; }
+  textarea {
+    width:100%; height:360px; resize:vertical;
+    background:#0b0b0b; color:#ccc; border:1px solid #444;
+    padding:12px; font:13px/1.45 Consolas, monospace;
+    border-radius:4px;
+  }
+  #output { height:420px; }
+  .stats { color:#888; font-size:12px; margin:8px 0; }
+  .repeat { color:#aaa; background:#191919; padding:2px 5px; }
+</style>
+</head>
+<body>
+
+<h1>Repeat Log Collapser</h1>
+
+<div class="toolbar">
+  <button onclick="processLog()">Collapse Repeat Blocks</button>
+  <button onclick="copyOutput()">Copy Output</button>
+  <button onclick="clearAll()">Clear</button>
+</div>
+
+<div class="stats" id="stats">Paste your log below.</div>
+
+<textarea id="input" placeholder="Paste logs here..."></textarea>
+<textarea id="output" readonly placeholder="Collapsed log will appear here..."></textarea>
+
+<script>
+function normalizeLine(line) {
+  // Remove timestamp for comparison.
+  line = line.replace(
+    /^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d+\\s*/,
+    ""
+  );
+
+  // Ignore changing Tick values.
+  line = line.replace(/Tick:\\s*\\d+/g, "Tick: <TICK>");
+  line = line.replace(/CurrentTick:\\s*\\d+/g, "CurrentTick: <TICK>");
+
+  return line;
+}
+
+function isBlockStart(line) {
+  return /---\\s*SimWorld Step START:\\s*Tick\\s+\\d+\\s*---/.test(line);
+}
+
+function getTick(line) {
+  const m = line.match(/SimWorld Step START:\\s*Tick\\s+(\\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+function processLog() {
+  const input = document.getElementById("input").value;
+  if (!input.trim()) return;
+
+  const lines = input.replace(/\\r\\n/g, "\\n").replace(/\\r/g, "\\n").split("\\n");
+
+  // Split into blocks at:
+  // --- SimWorld Step START: Tick N ---
+  const blocks = [];
+  let current = [];
+
+  for (const line of lines) {
+    if (isBlockStart(line) && current.length > 0) {
+      blocks.push(current);
+      current = [];
+    }
+    current.push(line);
+  }
+
+  if (current.length > 0) blocks.push(current);
+
+  const result = [];
+  let collapsedCount = 0;
+  let originalBlocks = 0;
+
+  for (let i = 0; i < blocks.length; ) {
+    // Ignore empty blocks.
+    if (blocks[i].every(x => x.trim() === "")) {
+      i++;
+      continue;
+    }
+
+    originalBlocks++;
+
+    const base = blocks[i];
+    const normalized = base.map(normalizeLine).join("\\n");
+
+    let repeat = 1;
+    let endTick = getTick(base.find(isBlockStart) || "");
+
+    let j = i + 1;
+
+    while (j < blocks.length) {
+      const candidate = blocks[j];
+      const candidateNormalized =
+        candidate.map(normalizeLine).join("\\n");
+
+      if (candidateNormalized !== normalized)
+        break;
+
+      repeat++;
+      const tick = getTick(candidate.find(isBlockStart) || "");
+      if (tick !== null) endTick = tick;
+
+      j++;
+    }
+
+    // Keep the first block exactly as-is.
+    result.push(...base);
+
+    if (repeat > 1) {
+      result.push(
+        `[repeat=${repeat}] Ticks ${getTick(base.find(isBlockStart) || "")} -> ${endTick}`
+      );
+      collapsedCount += repeat - 1;
+    }
+
+    i = j;
+  }
+
+  document.getElementById("output").value = result.join("\\n");
+
+  const originalLines = lines.length;
+  const outputLines = result.length;
+
+  document.getElementById("stats").textContent =
+    `Blocks: ${originalBlocks} | ` +
+    `Repeated blocks removed: ${collapsedCount} | ` +
+    `Lines: ${originalLines} -> ${outputLines}`;
+}
+
+async function copyOutput() {
+  const output = document.getElementById("output").value;
+  if (!output) return;
+
+  await navigator.clipboard.writeText(output);
+
+  const stats = document.getElementById("stats");
+  const old = stats.textContent;
+  stats.textContent = "Copied to clipboard.";
+  setTimeout(() => stats.textContent = old, 1200);
+}
+
+function clearAll() {
+  document.getElementById("input").value = "";
+  document.getElementById("output").value = "";
+  document.getElementById("stats").textContent = "Paste your log below.";
+}
+</script>
+
+</body>
+</html>
