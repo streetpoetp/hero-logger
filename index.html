@@ -140,6 +140,74 @@
             text-overflow: ellipsis;
             max-width: 300px; /* Adjust as needed */
         }
+
+        #autoReloadLabel.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .editor-shell {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .editor-shell > .editor-container {
+            height: 100%;
+        }
+
+        .empty-state {
+            position: absolute;
+            inset: 0;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-charcoal);
+        }
+
+        .empty-state[hidden],
+        .drag-overlay[hidden] {
+            display: none;
+        }
+
+        .empty-state-card {
+            min-width: 280px;
+            padding: 28px 36px;
+            border: 1px dashed #555;
+            border-radius: 6px;
+            text-align: center;
+            color: var(--accent-gray);
+            background: var(--bg-charcoal-secondary);
+        }
+
+        .empty-state-title {
+            margin-bottom: 10px;
+            color: var(--text-off-white);
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .empty-state-or {
+            display: block;
+            margin: 12px 0;
+        }
+
+        .drag-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            border: 3px dashed var(--accent-sky-blue);
+            background: rgba(30, 30, 30, 0.88);
+            color: var(--text-off-white);
+            font-size: 24px;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -150,15 +218,24 @@
         <div class="toolbar">
             <button id="openFileButton">Open File</button>
             <button id="reloadButton" disabled>Reload</button>
-            <label id="autoReloadLabel">
-                <input type="checkbox" id="autoReloadCheckbox">
+            <label id="autoReloadLabel" class="disabled" title="Open a file first.">
+                <input type="checkbox" id="autoReloadCheckbox" disabled>
                 <span class="custom-checkbox"></span>
                  Auto-Reload
             </label>
             <span id="filePathDisplay">No file selected</span>
             <div id="logPartsContainer"></div>
         </div>
-        <div id="mainEditorContainer" class="editor-container"></div>
+        <div class="editor-shell">
+            <div id="mainEditorContainer" class="editor-container"></div>
+            <div id="emptyState" class="empty-state">
+                <div class="empty-state-card">
+                    <div class="empty-state-title">Drop a log file here</div>
+                    <span class="empty-state-or">or</span>
+                    <button id="emptyOpenFileButton">Open File</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Drag Handle -->
@@ -174,6 +251,8 @@
         <div id="filterEditorContainer" class="editor-container"></div>
     </div>
 </div>
+
+<div id="dragOverlay" class="drag-overlay" hidden>Drop to open log</div>
 
 <script src="libs/monaco-editor/min/vs/loader.js"></script>
 
@@ -206,8 +285,9 @@
     let rawLogLines = [], filteredDataMap = [];
     let isSyncing = false, languageCounter = 0;
     
-    let currentFileHandle = null;
+    let currentLogSource = null;
     let autoReloadInterval = null;
+    let fileDragDepth = 0;
 
     let templateTokens;
     let lineParserRegex;
@@ -246,14 +326,17 @@
         initializeFormattingControls();
         loadSearchHistory();
 
-        mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Hero.LogViewer: Please select a file to begin.") });
+        mainEditor = monaco.editor.create(document.getElementById('mainEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("") });
         filterEditor = monaco.editor.create(document.getElementById('filterEditorContainer'), { ...commonEditorOptions, model: monaco.editor.createModel("Filtered results will appear here.") });
 
         document.getElementById('openFileButton').addEventListener('click', openAndLoadFile);
+        document.getElementById('emptyOpenFileButton').addEventListener('click', openAndLoadFile);
         document.getElementById('reloadButton').addEventListener('click', reloadFile);
         document.getElementById('autoReloadCheckbox').addEventListener('change', toggleAutoReload);
         document.getElementById('searchInput').addEventListener('keydown', handleSearch);
-        
+
+        updateFileSourceUi();
+        setupFileDragAndDrop();
         setupEditorSync();
         setupSplitterDrag();
     });
@@ -459,67 +542,212 @@
         updateLanguageAndContent(filterEditor, filterPartVisibility, newFilteredContent || (query ? "No results found." : "Filtered results will appear here."));
     }
 
+    function createHandleLogSource(handle) {
+        return {
+            name: handle.name,
+            canReload: true,
+            getFile: () => handle.getFile(),
+        };
+    }
+
+    function createOneShotLogSource(file) {
+        return {
+            name: file.name || 'Dropped file',
+            canReload: false,
+            getFile: async () => file,
+        };
+    }
+
+    async function readLogSource(source) {
+        const file = await source.getFile();
+        const text = await file.text();
+        return text.split(/\r?\n/);
+    }
+
+    function stopAutoReload(uncheck = false) {
+        if (autoReloadInterval) {
+            clearInterval(autoReloadInterval);
+            autoReloadInterval = null;
+        }
+        if (uncheck) {
+            document.getElementById('autoReloadCheckbox').checked = false;
+        }
+    }
+
+    function startAutoReload() {
+        stopAutoReload(false);
+        autoReloadInterval = setInterval(reloadFile, 2000);
+    }
+
+    function updateFileSourceUi() {
+        const reloadButton = document.getElementById('reloadButton');
+        const autoReloadCheckbox = document.getElementById('autoReloadCheckbox');
+        const autoReloadLabel = document.getElementById('autoReloadLabel');
+        const hasSource = !!currentLogSource;
+        const canReload = !!currentLogSource?.canReload;
+
+        document.getElementById('filePathDisplay').textContent = hasSource ? currentLogSource.name : 'No file selected';
+        reloadButton.disabled = !canReload;
+        autoReloadCheckbox.disabled = !canReload;
+        autoReloadLabel.classList.toggle('disabled', !canReload);
+
+        const unavailableReason = hasSource ? 'Reload unavailable for this dropped file.' : 'Open a file first.';
+        reloadButton.title = canReload ? 'Reload the current logfile' : unavailableReason;
+        autoReloadLabel.title = canReload ? 'Reload the current logfile every 2 seconds' : unavailableReason;
+        document.getElementById('emptyState').hidden = hasSource;
+    }
+
+    function isFileDrag(event) {
+        return Array.from(event.dataTransfer?.types || []).includes('Files');
+    }
+
+    function setDragOverlayVisible(visible) {
+        document.getElementById('dragOverlay').hidden = !visible;
+    }
+
+    async function createDroppedLogSource(dataTransfer) {
+        const items = Array.from(dataTransfer?.items || []).filter(item => item.kind === 'file');
+        const firstItem = items[0];
+
+        if (firstItem && typeof firstItem.getAsFileSystemHandle === 'function') {
+            try {
+                const handle = await firstItem.getAsFileSystemHandle();
+                if (handle?.kind === 'file') {
+                    return createHandleLogSource(handle);
+                }
+            } catch (err) {
+                console.warn('Reusable dropped-file handle unavailable; falling back to one-shot File.', err);
+            }
+        }
+
+        const file = firstItem?.getAsFile() || Array.from(dataTransfer?.files || [])[0];
+        return file ? createOneShotLogSource(file) : null;
+    }
+
+    function resetFileDragState() {
+        fileDragDepth = 0;
+        setDragOverlayVisible(false);
+    }
+
+    function setupFileDragAndDrop() {
+        document.addEventListener('dragenter', (event) => {
+            if (!isFileDrag(event)) return;
+            event.preventDefault();
+            fileDragDepth++;
+            setDragOverlayVisible(true);
+        });
+
+        document.addEventListener('dragover', (event) => {
+            if (!isFileDrag(event)) return;
+            event.preventDefault();
+            if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = 'copy';
+            }
+            setDragOverlayVisible(true);
+        });
+
+        document.addEventListener('dragleave', (event) => {
+            if (fileDragDepth <= 0) return;
+            event.preventDefault();
+            fileDragDepth = Math.max(0, fileDragDepth - 1);
+            if (fileDragDepth === 0) {
+                setDragOverlayVisible(false);
+            }
+        });
+
+        document.addEventListener('drop', async (event) => {
+            if (!isFileDrag(event)) return;
+            event.preventDefault();
+            resetFileDragState();
+
+            const source = await createDroppedLogSource(event.dataTransfer);
+            if (source) {
+                await adoptLogSource(source);
+            }
+        });
+
+        window.addEventListener('blur', resetFileDragState);
+    }
+
+    async function adoptLogSource(source) {
+        if (!source) return false;
+
+        try {
+            const nextLines = await readLogSource(source);
+            const shouldResumeAutoReload = !!autoReloadInterval && document.getElementById('autoReloadCheckbox').checked && source.canReload;
+
+            stopAutoReload(!source.canReload);
+            currentLogSource = source;
+            rawLogLines = nextLines;
+            updateFileSourceUi();
+            refreshViews();
+
+            if (shouldResumeAutoReload) {
+                startAutoReload();
+            }
+            return true;
+        } catch (err) {
+            console.error("Failed to load file:", err);
+            alert("Failed to load the selected file.");
+            return false;
+        }
+    }
+
     async function openAndLoadFile() {
         if (!window.showOpenFilePicker) {
             alert("Your browser doesn't support the File System Access API. Please use a modern browser like Chrome or Edge.");
             return;
         }
         try {
-            [currentFileHandle] = await window.showOpenFilePicker();
-            document.getElementById('reloadButton').disabled = false;
-            document.getElementById('filePathDisplay').textContent = currentFileHandle.name;
-            await loadFileFromHandle();
+            const [handle] = await window.showOpenFilePicker();
+            await adoptLogSource(createHandleLogSource(handle));
         } catch (err) {
-            console.error("File selection was cancelled or failed.", err);
+            if (err.name !== 'AbortError') {
+                console.error("File selection failed.", err);
+            }
         }
-    }
-
-    async function loadFileFromHandle() {
-        if (!currentFileHandle) return;
-        const file = await currentFileHandle.getFile();
-        const text = await file.text();
-        rawLogLines = text.split(/\r?\n/);
-        document.getElementById('filePathDisplay').textContent = currentFileHandle.name; // Update display on reload
-        refreshViews();
     }
 
     async function reloadFile() {
         const button = document.getElementById('reloadButton');
-        if (!currentFileHandle || button.disabled) return;
+        const sourceAtStart = currentLogSource;
+        if (!sourceAtStart?.canReload || button.disabled) return;
 
         button.disabled = true;
         const originalText = button.textContent;
         button.textContent = 'Reloading...';
 
         try {
-            await loadFileFromHandle();
+            const nextLines = await readLogSource(sourceAtStart);
+            if (currentLogSource !== sourceAtStart) return;
+            rawLogLines = nextLines;
+            refreshViews();
         } catch (err) {
             console.error("Error reloading file:", err);
             alert("Failed to reload the file. It may have been moved or deleted.");
-            currentFileHandle = null; // Invalidate the handle
-            document.getElementById('filePathDisplay').textContent = 'No file selected'; // Clear display
+            if (currentLogSource === sourceAtStart) {
+                currentLogSource = { ...sourceAtStart, canReload: false };
+                stopAutoReload(true);
+                updateFileSourceUi();
+            }
         } finally {
             button.textContent = originalText;
-            if (currentFileHandle) {
-                button.disabled = false;
+            if (currentLogSource === sourceAtStart) {
+                updateFileSourceUi();
             }
         }
     }
 
     function toggleAutoReload(e) {
         if (e.target.checked) {
-            if (!currentFileHandle) {
-                alert("Please open a file first.");
+            if (!currentLogSource?.canReload) {
+                alert("Auto-Reload is unavailable for this file source.");
                 e.target.checked = false;
                 return;
             }
-            if (autoReloadInterval) clearInterval(autoReloadInterval);
-            autoReloadInterval = setInterval(reloadFile, 2000);
+            startAutoReload();
         } else {
-            if (autoReloadInterval) {
-                clearInterval(autoReloadInterval);
-                autoReloadInterval = null;
-            }
+            stopAutoReload(false);
         }
     }
 

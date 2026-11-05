@@ -63,6 +63,25 @@ Goals:
     |                                                |
     +------------------------------------------------+
 
+## Opening Log Files
+
+The viewer supports two equivalent ways to choose the current logfile:
+
+- Click **Open File** in the toolbar or in the empty state.
+- Drag a single file anywhere over the viewer and drop it to open or replace the current logfile.
+
+The whole viewer is the drop target. Before a logfile is loaded, the main view shows a dedicated drop affordance. While a file is dragged over the viewer, a temporary **Drop to open log** overlay confirms the active drop target.
+
+Both entry paths feed the same parsing, rendering, filtering, formatting, and split-view synchronization behavior.
+
+**Reload capability depends on the browser file source:**
+
+- A reusable filesystem handle enables **Reload** and **Auto-Reload**.
+- A one-shot browser `File` still opens normally, but **Reload** and **Auto-Reload** are disabled because the viewer cannot reread later changes from disk.
+- Replacing a reloadable logfile with a one-shot file stops and unchecks any active Auto-Reload interval.
+
+The viewer intentionally keeps text-file input permissive; it does not restrict files by extension or MIME type.
+
 ## Default Style
 
     Font:
@@ -213,6 +232,8 @@ Example:
   Line wrapping             Yes
   Regex search              Yes
   Level filtering           Yes
+  Drag-and-drop file open   Yes
+  Reload capability gating  Yes
   Stack trace grouping      Yes
   Live tail                 Yes
   Large file optimization   Planned
